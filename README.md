@@ -71,7 +71,7 @@ Then:
 
 ## Known limits (check on your dev site)
 
-- **Teamwork Graph is off by default.** A Jira admin turns it on in Setup. The API is EAP: The docs say apps calling it should only be installed in test organisations. It is used only for enrichment (owner's teams, page owners) and fails soft. Confirm the node fields in `src/adapters/teamwork-graph.ts` against the live schema in the TWG playground.
+- **Teamwork Graph is off by default.** A Jira admin turns it on in Setup. The API is EAP; the docs say apps calling it should only be installed in test organisations. It is used only for enrichment (owner's teams, page owners) and fails soft. Confirm the node fields in `src/adapters/teamwork-graph.ts` against the live schema in the TWG playground.
 - **Workflow validators** apply to company-managed project workflows.
 - Issue create/edit can't be blocked by Forge, only flagged.
 
