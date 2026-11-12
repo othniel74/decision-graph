@@ -1,0 +1,316 @@
+modules:
+  # ---------- Jira ----------
+  jira:issuePanel:
+    - key: decisiongraph-issue-panel
+      resource: issue-panel
+      resolver:
+        function: resolver
+      render: native
+      title: Decisions
+      icon: resource:assets;icon.svg
+
+  jira:globalPage:
+    - key: decisiongraph-global
+      resource: global-page
+      resolver:
+        function: resolver
+      render: native
+      title: DecisionGraph
+      icon: resource:assets;icon.svg
+
+  jira:workflowValidator:
+    - key: decisiongraph-validator
+      name: DecisionGraph decision check
+      description: Blocks a transition that breaks an accepted team decision and tells the person why.
+      function: validate-transition
+
+  # ---------- Confluence ----------
+  macro:
+    - key: decisiongraph-decision-record
+      resource: macro
+      resolver:
+        function: resolver
+      render: native
+      title: Decision record
+      description: Record an enforceable decision on this page. Jira work and agents are checked against it.
+      icon: resource:assets;icon.svg
+
+  # ---------- Events and housekeeping ----------
+  trigger:
+    - key: decisiongraph-issue-events
+      function: on-issue-event
+      events:
+        - avi:jira:created:issue
+        - avi:jira:updated:issue
+    - key: decisiongraph-lifecycle
+      function: migrate
+      events:
+        - avi:forge:installed:app
+        - avi:forge:upgraded:app
+
+  scheduledTrigger:
+    - key: decisiongraph-migrate-hourly
+      function: migrate
+      interval: hour
+
+  sql:
+    - key: main
+      engine: mysql
+
+  # ---------- Rovo agent, actions and MCP tools ----------
+  rovo:agent:
+    - key: decisiongraph-agent
+      name: Decision Keeper
+      description: Checks plans against your team's recorded decisions before work starts, and helps record new decisions.
+      icon: resource:assets;icon.svg
+      prompt: resource:agent;prompt.txt
+      conversationStarters:
+        - Does this plan conflict with any of our decisions?
+        - Which decisions apply to this issue?
+        - Turn this page's decision into an enforceable rule
+      actions:
+        - check-plan
+        - list-decisions
+        - explain-decision
+        - request-exception
+        - draft-decision
+
+  action:
+    - key: check-plan
+      name: Check plan against decisions
+      function: check-plan-rovo-fn
+      actionVerb: GET
+      description: |
+        Check whether a planned change conflicts with the team's accepted decisions. Call this BEFORE
+        creating, editing or moving any Jira work. Returns ALLOW, WARN or BLOCK with the decisions involved.
+      inputs:
+        plan:
+          title: Plan
+          type: string
+          required: true
+          description: What you intend to do, in plain words, including any technical approach.
+        issueKey:
+          title: Issue key
+          type: string
+          required: false
+          description: The Jira issue the plan relates to, if any.
+        projectKey:
+          title: Project key
+          type: string
+          required: false
+          description: Jira project key, required when there is no issue key.
+        targetStatus:
+          title: Target status
+          type: string
+          required: false
+          description: The status you intend to move the work to, if the plan includes a transition.
+        labels:
+          title: Labels
+          type: string
+          required: false
+          description: Comma-separated labels the work will carry.
+        components:
+          title: Components
+          type: string
+          required: false
+          description: Comma-separated components the work will be in.
+        agentName:
+          title: Agent name
+          type: string
+          required: false
+          description: Name of the agent asking, for the audit trail.
+
+    - key: check-plan-tool
+      name: Check plan against decisions
+      function: check-plan-mcp-fn
+      actionVerb: GET
+      description: |
+        For external AI agents. Check whether a planned change to Jira work conflicts with the team's
+        accepted decisions before acting. Returns ALLOW, WARN or BLOCK with reasons and decision owners.
+      inputs:
+        plan:
+          title: Plan
+          type: string
+          required: true
+          description: What you intend to do, in plain words.
+        issueKey:
+          title: Issue key
+          type: string
+          required: false
+          description: The Jira issue the plan relates to, if any.
+        projectKey:
+          title: Project key
+          type: string
+          required: false
+          description: Jira project key, required when there is no issue key.
+        targetStatus:
+          title: Target status
+          type: string
+          required: false
+          description: The status you intend to move the work to, if any.
+        agentName:
+          title: Agent name
+          type: string
+          required: false
+          description: Your name, for the audit trail.
+
+    - key: list-decisions
+      name: List decisions that apply
+      function: list-decisions-fn
+      actionVerb: GET
+      description: List accepted decisions that apply to a Jira project (and optionally labels or components).
+      inputs:
+        projectKey:
+          title: Project key
+          type: string
+          required: false
+          description: Jira project key. Uses the current issue's project when omitted.
+        labels:
+          title: Labels
+          type: string
+          required: false
+          description: Comma-separated labels.
+        components:
+          title: Components
+          type: string
+          required: false
+          description: Comma-separated components.
+
+    - key: explain-decision
+      name: Explain a decision
+      function: explain-decision-fn
+      actionVerb: GET
+      description: Explain what was decided, why, who owns it, and what it replaced.
+      inputs:
+        decisionId:
+          title: Decision id
+          type: string
+          required: true
+          description: The decision id returned by other DecisionGraph actions.
+
+    - key: request-exception
+      name: Ask the decision owner for an exception
+      function: request-exception-fn
+      actionVerb: UPDATE
+      description: Ask the owner of a decision to allow an exception for a conflict. The work stays blocked until they decide.
+      inputs:
+        conflictId:
+          title: Conflict id
+          type: string
+          required: true
+          description: The conflict id returned by check-plan.
+        reason:
+          title: Reason
+          type: string
+          required: true
+          description: Why the exception is needed.
+
+    - key: draft-decision
+      name: Draft a decision for the owner to accept
+      function: draft-decision-fn
+      actionVerb: CREATE
+      description: |
+        Draft an enforceable decision from text the user provides (for example a Confluence decision page).
+        Drafts are never enforced until the owner accepts them in DecisionGraph.
+      inputs:
+        title:
+          title: Title
+          type: string
+          required: true
+          description: Short name for the decision.
+        statement:
+          title: Statement
+          type: string
+          required: true
+          description: What was decided.
+        rationale:
+          title: Rationale
+          type: string
+          required: false
+          description: Why it was decided.
+        ownerAccountId:
+          title: Owner account id
+          type: string
+          required: false
+          description: Account id of the decision owner. Defaults to the current user.
+        projectKeys:
+          title: Project keys
+          type: string
+          required: false
+          description: Comma-separated Jira project keys the decision covers. Empty means all.
+        constraintsJson:
+          title: Constraints (JSON)
+          type: string
+          required: true
+          description: |
+            JSON array of rules. Kinds: {"kind":"forbid_terms","terms":[...]},
+            {"kind":"forbid_labels","labels":[...]}, {"kind":"forbid_components","components":[...]},
+            {"kind":"restrict_transition","toStatuses":[...],"window":{"days":[5],"fromHour":12,"toHour":23,"timezone":"Europe/London"}},
+            {"kind":"require_field","field":"customfield_123","fieldLabel":"Security review","whenEnteringStatuses":["Done"]}
+        sourceUrl:
+          title: Source URL
+          type: string
+          required: false
+          description: Link to where the decision is recorded.
+
+  rovo:mcp:
+    - key: decisiongraph-mcp
+      name: DecisionGraph
+      tools:
+        - check-plan-tool
+        - list-decisions
+        - explain-decision
+
+  # ---------- Functions ----------
+  function:
+    - key: resolver
+      handler: index.resolver
+    - key: validate-transition
+      handler: index.validateTransition
+    - key: on-issue-event
+      handler: index.onIssueEvent
+    - key: migrate
+      handler: index.migrate
+      timeoutSeconds: 900
+    - key: check-plan-rovo-fn
+      handler: index.checkPlanRovo
+    - key: check-plan-mcp-fn
+      handler: index.checkPlanMcp
+    - key: list-decisions-fn
+      handler: index.listApplicableDecisions
+    - key: explain-decision-fn
+      handler: index.explainDecision
+    - key: request-exception-fn
+      handler: index.requestExceptionAction
+    - key: draft-decision-fn
+      handler: index.draftDecision
+
+resources:
+  - key: issue-panel
+    path: src/frontend/issue-panel.tsx
+  - key: global-page
+    path: src/frontend/global-page.tsx
+  - key: macro
+    path: src/frontend/macro.tsx
+  - key: agent
+    path: resources/agent
+  - key: assets
+    path: resources/assets
+
+permissions:
+  scopes:
+    - read:jira-work
+    - write:jira-work
+    - read:jira-user
+    - read:confluence-content.summary
+    # Teamwork Graph (EAP). Confirm names with `forge lint` on your CLI version.
+    - read:graph:user:atlassian
+    - read:graph:team:atlassian
+    - read:graph:page:confluence
+
+app:
+  id: ari:cloud:ecosystem::app/REPLACE-WITH-YOUR-APP-ID
+  runtime:
+    name: nodejs22.x
+  licensing:
+    enabled: false

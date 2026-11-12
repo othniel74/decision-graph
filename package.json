@@ -1,0 +1,28 @@
+{
+  "name": "decisiongraph",
+  "version": "0.1.0",
+  "description": "Enforceable team decisions for Jira, Confluence and AI agents (Atlassian Forge).",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc -p .",
+    "check": "tsc -p . && vitest run",
+    "lint:manifest": "node scripts/validate-manifest.mjs"
+  },
+  "author": "NOVTIA Ltd",
+  "license": "UNLICENSED",
+  "devDependencies": {
+    "@types/node": "^22.20.5",
+    "@types/react": "^18.3.31",
+    "typescript": "^5.9.3",
+    "vitest": "^3.2.7"
+  },
+  "dependencies": {
+    "@forge/api": "^8.5.0",
+    "@forge/bridge": "^7.3.0",
+    "@forge/react": "^12.5.0",
+    "@forge/resolver": "^2.0.2",
+    "@forge/sql": "^4.0.10",
+    "react": "^18.3.1"
+  },
+  "private": true
+}
