@@ -43,8 +43,8 @@ function checkPlan(actorType: ActorType) {
       if (issueKey && !ISSUE_KEY.test(issueKey)) throw new DomainError(`"${rawKey}" is not a Jira issue key.`, 'INVALID');
       const d = deps();
       let item: WorkItem;
+      const decisions = await d.store.listDecisions({ statuses: ['accepted'] });
       if (issueKey) {
-        const decisions = await d.store.listDecisions({ statuses: ['accepted'] });
         // Read as the invoking user so the agent can't learn about issues the user can't see.
         item = { ...(await fetchWorkItem(issueKey, requiredFieldIds(decisions), 'user')), proposal: plan };
       } else {
@@ -60,7 +60,7 @@ function checkPlan(actorType: ActorType) {
         toStatus: str(payload.targetStatus, 'targetStatus', { required: false, max: 60 }) || undefined,
         item,
       };
-      return runCheck(d, action);
+      return runCheck(d, action, { decisions });
     });
     return render(r, (o) => {
       const res = o.result;

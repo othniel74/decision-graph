@@ -10,6 +10,14 @@ export class MemoryStore implements Store {
   exceptions: DecisionException[] = [];
   receipts: Receipt[] = [];
   conflicts = new Map<string, Conflict>();
+  settings = new Map<string, string>();
+
+  async getSetting(key: string) {
+    return this.settings.get(key) ?? null;
+  }
+  async setSetting(key: string, value: string) {
+    this.settings.set(key, value);
+  }
 
   async listDecisions(f: DecisionFilter = {}): Promise<Decision[]> {
     return [...this.decisions.values()]

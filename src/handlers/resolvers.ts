@@ -2,12 +2,14 @@ import Resolver from '@forge/resolver';
 import { DomainError } from '../domain/lifecycle';
 import { str } from '../domain/validate';
 import type { DecisionStatus } from '../domain/types';
-import { fetchWorkItem, requiredFieldIds } from '../adapters/jira';
+import { fetchWorkItem, requiredFieldIds, isJiraAdmin, forgeDemoJira } from '../adapters/jira';
 import { ownerTeams, pageOwnerAccountIds } from '../adapters/teamwork-graph';
 import { runCheck } from '../services/checks';
 import { changeStatus, createDecision, getDecisionWithHistory, listDecisions, supersedeDecision, decisionsDueForReview } from '../services/decisions';
 import { myReviewQueue, requestException, resolveConflict, type Resolution } from '../services/reviews';
 import { health, verifyAuditTrail } from '../services/audit';
+import { getSettings, updateSettings } from '../services/settings';
+import { demoLoaded, seedDemo } from '../services/demo';
 import { deps, safely } from './runtime';
 
 /**
@@ -42,14 +44,15 @@ resolver.define('issuePanel', async ({ context }: Req) =>
     const d = deps();
     const all = await d.store.listDecisions({ statuses: ['accepted'] });
     const item = await fetchWorkItem(key, requiredFieldIds(all), 'user');
-    const preview = await runCheck(d, { type: 'update', actorType: 'human', actorAccountId: me, item }, { record: false });
+    const preview = await runCheck(d, { type: 'update', actorType: 'human', actorAccountId: me, item }, { record: false, decisions: all });
     const [conflicts, exceptions] = await Promise.all([
       d.store.listConflicts({ issueKey: key, limit: 20 }),
       d.store.listExceptions({ issueKey: key }),
     ]);
     const applicable = all.filter((x) => preview.result.applicableDecisionIds.includes(x.id));
     const owners = [...new Set(preview.result.violations.map((v) => v.ownerAccountId))].slice(0, 3);
-    const teams = Object.fromEntries(await Promise.all(owners.map(async (o) => [o, await ownerTeams(o)] as const)));
+    const twg = (await getSettings(d)).teamworkGraph;
+    const teams = twg ? Object.fromEntries(await Promise.all(owners.map(async (o) => [o, await ownerTeams(o)] as const))) : {};
     return { me, issueKey: key, result: preview.result, applicable, conflicts, exceptions, ownerTeams: teams };
   }),
 );
@@ -119,9 +122,30 @@ resolver.define('pageDecisions', async ({ context }: Req) =>
     const pageId = context.extension?.content?.id;
     if (!pageId) throw new DomainError('No page in context.', 'INVALID');
     const decisions = await listDecisions(deps(), { sourcePageId: pageId });
-    const owners = context.cloudId ? await pageOwnerAccountIds(`ari:cloud:confluence:${context.cloudId}:page/${pageId}`) : [];
+    const twg = (await getSettings(deps())).teamworkGraph;
+    const owners = twg && context.cloudId ? await pageOwnerAccountIds(`ari:cloud:confluence:${context.cloudId}:page/${pageId}`) : [];
     return { me, pageId, decisions, suggestedOwner: owners[0] ?? me };
   }),
+);
+
+/** Setup tab: settings, admin status and whether demo data is loaded. */
+resolver.define('setup', async ({ context }: Req) =>
+  safely(async () => {
+    actor(context);
+    const [settings, isAdmin, demo] = await Promise.all([getSettings(deps()), isJiraAdmin(), demoLoaded(deps())]);
+    return { settings, isAdmin, demoLoaded: demo };
+  }),
+);
+
+resolver.define('updateSettings', async ({ payload, context }: Req) =>
+  safely(async () => {
+    actor(context);
+    return updateSettings(deps(), payload.patch, await isJiraAdmin());
+  }),
+);
+
+resolver.define('seedDemo', async ({ payload, context }: Req) =>
+  safely(async () => seedDemo(deps(), forgeDemoJira, { projectKey: payload.projectKey, isAdmin: await isJiraAdmin() }, actor(context))),
 );
 
 export const handler = resolver.getDefinitions();

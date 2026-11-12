@@ -52,4 +52,7 @@ export interface Store {
   getConflict(id: string): Promise<Conflict | null>;
   updateConflict(c: Conflict): Promise<void>;
   listConflicts(filter: { status?: ConflictStatus; ownerDecisionIds?: string[]; issueKey?: string; limit: number }): Promise<Conflict[]>;
+
+  getSetting(key: string): Promise<string | null>;
+  setSetting(key: string, value: string): Promise<void>;
 }

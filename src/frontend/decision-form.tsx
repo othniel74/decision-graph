@@ -16,6 +16,7 @@ import {
   HelperMessage,
 } from '@forge/react';
 import type { ConstraintKind, Decision } from '../domain/types';
+import { describeConstraint } from '../domain/describe';
 import { call, commaList } from './shared';
 
 /**
@@ -110,6 +111,7 @@ export function DecisionForm(props: DecisionFormProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
 
+  const previewScope = { projectKeys: commaList(projects), issueTypes: [], components: [], labels: commaList(scopeLabels) };
   const update = (i: number, patch: Partial<ConstraintRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   async function submit() {
@@ -214,6 +216,9 @@ export function DecisionForm(props: DecisionFormProps) {
               </Inline>
             </Stack>
           ) : null}
+          <Text size="small" color="color.text.subtle">
+            Preview: {describeConstraint(toConstraint(r), previewScope, enforcement)}
+          </Text>
           {rows.length > 1 ? (
             <Button appearance="subtle" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>
               Remove rule

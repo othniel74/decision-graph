@@ -94,3 +94,64 @@ export async function notifyOwnerOnIssue(issueKey: string, ownerAccountId: strin
   });
   if (!res.ok) console.warn(`notifyOwnerOnIssue: HTTP ${res.status} for ${issueKey}`);
 }
+
+/** True when the current user is a Jira administrator. */
+export async function isJiraAdmin(): Promise<boolean> {
+  const res = await api.asUser().requestJira(route`/rest/api/3/mypermissions?permissions=ADMINISTER`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!res.ok) return false;
+  const body = (await res.json()) as { permissions?: { ADMINISTER?: { havePermission?: boolean } } };
+  return body.permissions?.ADMINISTER?.havePermission === true;
+}
+
+interface IssueTypeMeta {
+  id: string;
+  name: string;
+  subtask?: boolean;
+}
+
+const PREFERRED_TYPES = ['task', 'story', 'bug'];
+
+/** Pick a standard issue type for the project, preferring Task, then Story, then Bug. */
+export function chooseIssueType(types: IssueTypeMeta[]): IssueTypeMeta | undefined {
+  const standard = types.filter((t) => !t.subtask);
+  for (const name of PREFERRED_TYPES) {
+    const hit = standard.find((t) => t.name.toLowerCase() === name);
+    if (hit) return hit;
+  }
+  return standard[0];
+}
+
+/** Jira implementation of the demo seeder's port. Issues are created as the admin who seeds. */
+export const forgeDemoJira = {
+  async createIssue(input: { projectKey: string; summary: string; description: string; labels: string[] }): Promise<string> {
+    const metaRes = await api.asUser().requestJira(route`/rest/api/3/issue/createmeta/${input.projectKey}/issuetypes`, {
+      headers: { Accept: 'application/json' },
+    });
+    if (!metaRes.ok) throw new JiraError(`Can't create issues in ${input.projectKey} (HTTP ${metaRes.status}). Check the key and your permissions.`, metaRes.status);
+    const meta = (await metaRes.json()) as { issueTypes?: IssueTypeMeta[]; values?: IssueTypeMeta[] };
+    const type = chooseIssueType(meta.issueTypes ?? meta.values ?? []);
+    if (!type) throw new JiraError(`${input.projectKey} has no issue type the demo can use.`, 400);
+
+    const create = async (withLabels: boolean) =>
+      api.asUser().requestJira(route`/rest/api/3/issue`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          fields: {
+            project: { key: input.projectKey },
+            issuetype: { id: type.id },
+            summary: input.summary,
+            description: adfDoc([[{ text: input.description }]]),
+            ...(withLabels ? { labels: input.labels } : {}),
+          },
+        }),
+      });
+    let res = await create(true);
+    // Some create screens don't include labels; retry without rather than failing the demo.
+    if (res.status === 400) res = await create(false);
+    if (!res.ok) throw new JiraError(`Could not create a demo issue in ${input.projectKey} (HTTP ${res.status}).`, res.status);
+    return ((await res.json()) as { key: string }).key;
+  },
+};

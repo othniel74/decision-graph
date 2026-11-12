@@ -1,7 +1,7 @@
 import { check } from '../domain/engine';
 import { DomainError } from '../domain/lifecycle';
 import { buildReceipt, type Receipt } from '../domain/receipt';
-import type { CheckResult, ProposedAction, Violation } from '../domain/types';
+import type { CheckResult, Decision, ProposedAction, Violation } from '../domain/types';
 import type { Conflict } from '../storage/store';
 import type { Deps } from './context';
 
@@ -72,12 +72,14 @@ export interface CheckOptions {
   record?: boolean;
   /** Open conflicts for owners to review (default: only when recording). */
   openConflicts?: boolean;
+  /** Accepted decisions already loaded by the caller, to avoid a second read. */
+  decisions?: Decision[];
 }
 
 export async function runCheck(deps: Deps, action: ProposedAction, opts: CheckOptions = {}): Promise<CheckOutcome | { result: CheckResult; receipt: null; conflicts: [] }> {
   const record = opts.record ?? true;
   const [decisions, exceptions] = await Promise.all([
-    deps.store.listDecisions({ statuses: ['accepted'] }),
+    opts.decisions ? Promise.resolve(opts.decisions.filter((d) => d.status === 'accepted')) : deps.store.listDecisions({ statuses: ['accepted'] }),
     action.item.key ? deps.store.listExceptions({ issueKey: action.item.key }) : Promise.resolve([]),
   ]);
   const result = check({ action, decisions, exceptions, now: deps.now() });

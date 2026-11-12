@@ -151,7 +151,11 @@ function App() {
       {data.applicable.map((d) => (
         <DecisionSummary key={d.id} d={d} />
       ))}
-      {data.applicable.length === 0 ? <Text>No recorded decisions cover this work yet.</Text> : null}
+      {data.applicable.length === 0 ? (
+        <Text>
+          No recorded decisions cover this work yet. Record one with the Decision record macro in Confluence, or in Apps → DecisionGraph.
+        </Text>
+      ) : null}
     </Stack>
   );
 }

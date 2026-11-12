@@ -19,7 +19,7 @@ Built for **Codegeist 2026**, in the *Apps for Software Teams* category.
 | Workflow validator | `jira:workflowValidator` | Blocks transitions that break a `block` decision and explains why |
 | Issue events | `trigger` | Create and edit can't be blocked, so conflicts are recorded and the owner is @mentioned |
 | Confluence macro "Decision record" | `macro` | Record, accept, supersede or retire decisions on the page where they were made; owner suggested via Teamwork Graph |
-| Global page "DecisionGraph" | `jira:globalPage` | Owner review queue, decision register, activity and audit verification |
+| Global page "DecisionGraph" | `jira:globalPage` | Owner review queue, decision register, activity and audit verification, Setup (demo data, Teamwork Graph switch) |
 | Rovo agent "Decision Keeper" | `rovo:agent` + `action` | Checks plans before acting; drafts decisions (never accepts them) |
 | MCP tools | `rovo:mcp` | `check-plan-tool`, `list-decisions`, `explain-decision` for Claude, Cursor and other external agents |
 
@@ -27,7 +27,7 @@ Built for **Codegeist 2026**, in the *Apps for Software Teams* category.
 
 `forbid_terms` · `forbid_labels` · `forbid_components` · `restrict_transition` (optional freeze window, timezone-aware, wraps midnight) · `require_field`
 
-Only `accepted` decisions are enforced. Each decision is `warn` or `block`.
+Only `accepted` decisions are enforced. Each decision is `warn` or `block`. Every rule shows a plain-English preview, e.g. *Blocks issues in PAY that mention "store card"*.
 
 ## Architecture
 
@@ -54,7 +54,7 @@ Prerequisites: Node 22+, Forge CLI (`npm i -g @forge/cli`), an Atlassian develop
 
 ```bash
 npm install
-npm run check            # typecheck + 37 unit tests
+npm run check            # typecheck + 46 unit tests
 npm run lint:manifest    # offline manifest schema check
 
 forge login
@@ -65,13 +65,13 @@ forge install --product confluence --site <your-site>.atlassian.net --upgrade
 ```
 
 Then:
-1. In Jira, open **Apps → DecisionGraph** and record a decision (or add the **Decision record** macro on a Confluence page).
+1. In Jira, open **Apps → DecisionGraph → Setup**. As a Jira admin, enter a project key and click **Load demo data**: three decisions you own, plus three issues (one blocked, one clear, one warned). Or record your own decision there, or with the **Decision record** macro in Confluence.
 2. Add the **DecisionGraph decision check** validator to the transitions you want guarded (company-managed workflows).
 3. For external agents: in Atlassian Administration → Connected apps, enable the DecisionGraph MCP tools. The endpoint is `https://mcp.atlassian.com/forge/<appId>`.
 
 ## Known limits (check on your dev site)
 
-- **Teamwork Graph API is EAP.** The docs say apps calling it should only be installed in test organisations. It is used only for enrichment (owner's teams, page owners) and fails soft. Confirm the node fields in `src/adapters/teamwork-graph.ts` against the live schema in the TWG playground.
+- **Teamwork Graph is off by default.** A Jira admin turns it on in Setup. The API is EAP: The docs say apps calling it should only be installed in test organisations. It is used only for enrichment (owner's teams, page owners) and fails soft. Confirm the node fields in `src/adapters/teamwork-graph.ts` against the live schema in the TWG playground.
 - **Workflow validators** apply to company-managed project workflows.
 - Issue create/edit can't be blocked by Forge, only flagged.
 

@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { invoke } from '@forge/bridge';
 import { Box, Inline, Link, Lozenge, SectionMessage, Spinner, Stack, Text, User, xcss } from '@forge/react';
 import type { Decision, Verdict } from '../domain/types';
+import { describeDecisionRules } from '../domain/describe';
 
 export type Result<T> = { ok: true; data: T } | { ok: false; error: string; code: string };
 
@@ -93,6 +94,11 @@ export function DecisionSummary({ d }: { d: Decision }) {
         </Inline>
         <Text>{d.statement}</Text>
         {d.rationale ? <Text size="small">Why: {d.rationale}</Text> : null}
+        {describeDecisionRules(d).map((line, i) => (
+          <Text key={i} size="small" color="color.text.subtle">
+            • {line}
+          </Text>
+        ))}
         <Inline space="space.100" alignBlock="center" shouldWrap>
           <Text size="small">Owner:</Text>
           <User accountId={d.ownerAccountId} />

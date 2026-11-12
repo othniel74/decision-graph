@@ -63,6 +63,14 @@ const MIGRATIONS: [string, string][] = [
       INDEX idx_conf_issue (issue_key)
     )`,
   ],
+  [
+    'v005_settings',
+    `CREATE TABLE IF NOT EXISTS settings (
+      setting_key VARCHAR(64) PRIMARY KEY,
+      setting_value VARCHAR(1024) NOT NULL,
+      updated_at VARCHAR(32) NOT NULL
+    )`,
+  ],
 ];
 
 export async function runMigrations(): Promise<string[]> {
@@ -209,6 +217,21 @@ export class SqlStore implements Store {
     await sql
       .prepare('UPDATE conflicts SET status = ?, body = ? WHERE id = ?')
       .bindParams(c.status, JSON.stringify(c), c.id)
+      .execute();
+  }
+
+  async getSetting(key: string): Promise<string | null> {
+    const res = await sql
+      .prepare<{ setting_value: string }>('SELECT setting_value FROM settings WHERE setting_key = ?')
+      .bindParams(key)
+      .execute();
+    return res.rows[0]?.setting_value ?? null;
+  }
+
+  async setSetting(key: string, value: string): Promise<void> {
+    await sql
+      .prepare('INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_at = VALUES(updated_at)')
+      .bindParams(key, value, new Date().toISOString())
       .execute();
   }
 

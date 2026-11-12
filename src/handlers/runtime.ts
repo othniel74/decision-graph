@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { DomainError } from '../domain/lifecycle';
 import { SqlStore, runMigrations } from '../storage/sql';
+import { JiraError } from '../adapters/jira';
 import type { Deps } from '../services/context';
 
 let cached: Deps | null = null;
@@ -47,6 +48,8 @@ export async function safely<T>(fn: () => Promise<T>): Promise<Ok<T> | Err> {
     return { ok: true, data: await fn() };
   } catch (e) {
     if (e instanceof DomainError) return { ok: false, error: e.message, code: e.code };
+    // Jira adapter messages are written for users and contain no secrets.
+    if (e instanceof JiraError) return { ok: false, error: e.message, code: 'JIRA' };
     console.error('Unhandled error', e);
     return { ok: false, error: 'Something went wrong. Please try again.', code: 'INTERNAL' };
   }

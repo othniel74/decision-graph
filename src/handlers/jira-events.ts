@@ -32,7 +32,7 @@ export async function validateTransition(args: ValidatorArgs, context?: { accoun
     const toStatus = await statusName(args.transition.to.id);
     const item = await fetchWorkItem(args.issue.key, requiredFieldIds(decisions), 'app', normaliseModifiedFields(args.modifiedFields));
     const action: ProposedAction = { type: 'transition', actorType: 'human', actorAccountId: context?.accountId, toStatus, item };
-    const outcome = await runCheck(d, action);
+    const outcome = await runCheck(d, action, { decisions });
     if (outcome.receipt) await notifyNewConflicts(outcome as CheckOutcome);
     if (outcome.result.verdict === 'block') return { result: false, errorMessage: summarise(outcome.result).slice(0, 900) };
     return { result: true };
@@ -66,7 +66,7 @@ export async function onIssueEvent(event: IssueEvent): Promise<void> {
     const decisions = await d.store.listDecisions({ statuses: ['accepted'] });
     if (decisions.length === 0) return;
     const item = await fetchWorkItem(event.issue.key, requiredFieldIds(decisions), 'app');
-    const outcome = await runCheck(d, { type: isCreate ? 'create' : 'update', actorType: 'human', actorAccountId: event.atlassianId, item });
+    const outcome = await runCheck(d, { type: isCreate ? 'create' : 'update', actorType: 'human', actorAccountId: event.atlassianId, item }, { decisions });
     if (outcome.receipt && outcome.result.verdict !== 'allow') await notifyNewConflicts(outcome as CheckOutcome);
   } catch (e) {
     console.error(`onIssueEvent failed for ${event.issue?.key}`, e);

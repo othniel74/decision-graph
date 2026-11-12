@@ -89,6 +89,8 @@ export interface Decision {
   supersededById?: string;
   /** ISO date after which the decision should be reviewed. */
   reviewBy?: string;
+  /** Created by the demo seeder, so it can be recognised and not seeded twice. */
+  demo?: boolean;
   createdAt: string;
   updatedAt: string;
   version: number;

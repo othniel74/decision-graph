@@ -13,6 +13,9 @@ import ForgeReconciler, {
   TabPanel,
   Tabs,
   Text,
+  Textfield,
+  Toggle,
+  Label,
   User,
   xcss,
 } from '@forge/react';
@@ -103,7 +106,7 @@ function Register({ me }: { me: string }) {
         head={{ cells: ['Decision', 'Status', 'When broken', 'Owner', 'Scope', 'Updated'].map((c) => ({ key: c, content: c })) }}
         rows={rows}
         rowsPerPage={20}
-        emptyView={<Text>No decisions recorded yet.</Text>}
+        emptyView={<Text>No decisions yet. Record one here or with the Decision record macro in Confluence. Admins can load demo data from the Setup tab.</Text>}
       />
     </Stack>
   );
@@ -160,6 +163,79 @@ function Activity() {
   );
 }
 
+interface SetupData {
+  settings: { teamworkGraph: boolean };
+  isAdmin: boolean;
+  demoLoaded: boolean;
+}
+
+function Setup() {
+  const { loading, data, error, reload } = useResolver<SetupData>('setup');
+  const [projectKey, setProjectKey] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string }>();
+  if (loading && !data) return <Loading what="setup" />;
+  if (error || !data) return <ErrorBox error={error ?? 'Could not load setup.'} />;
+
+  const toggleTwg = async () => {
+    setBusy(true);
+    const r = await call('updateSettings', { patch: { teamworkGraph: !data.settings.teamworkGraph } });
+    setBusy(false);
+    setMsg(r.ok ? undefined : { ok: false, text: r.error });
+    void reload();
+  };
+  const seed = async () => {
+    setBusy(true);
+    setMsg(undefined);
+    const r = await call<{ issues: { key: string; verdict: string }[] }>('seedDemo', { projectKey });
+    setBusy(false);
+    setMsg(r.ok ? { ok: true, text: `Demo loaded: 3 decisions and issues ${r.data.issues.map((i) => `${i.key} (${i.verdict})`).join(', ')}. Open one to see the Decisions panel.` } : { ok: false, text: r.error });
+    void reload();
+  };
+
+  return (
+    <Stack space="space.300">
+      {!data.isAdmin ? (
+        <SectionMessage appearance="information">
+          <Text>Only Jira administrators can change these settings.</Text>
+        </SectionMessage>
+      ) : null}
+      {msg ? (
+        <SectionMessage appearance={msg.ok ? 'success' : 'error'}>
+          <Text>{msg.text}</Text>
+        </SectionMessage>
+      ) : null}
+
+      <Stack space="space.100">
+        <Heading size="small">Demo data</Heading>
+        <Text>Creates three decisions you own and three issues in a project you choose: one is blocked, one is clear, one gets a warning.</Text>
+        {data.demoLoaded ? (
+          <Text>Demo data is already loaded on this site.</Text>
+        ) : (
+          <Inline space="space.100" alignBlock="end">
+            <Stack space="space.050">
+              <Label labelFor="dg-demo-project">Project key</Label>
+              <Textfield id="dg-demo-project" placeholder="PAY" value={projectKey} onChange={(e) => setProjectKey(e.target.value)} isDisabled={!data.isAdmin} />
+            </Stack>
+            <Button appearance="primary" isDisabled={!data.isAdmin || busy || !projectKey.trim()} onClick={seed}>
+              Load demo data
+            </Button>
+          </Inline>
+        )}
+      </Stack>
+
+      <Stack space="space.100">
+        <Heading size="small">Teamwork Graph</Heading>
+        <Text>Shows each decision owner's teams and suggests owners from Confluence page ownership. The Teamwork Graph API is in Early Access; Atlassian asks that apps calling it only be installed in test organisations.</Text>
+        <Inline space="space.100" alignBlock="center">
+          <Toggle id="dg-twg" isChecked={data.settings.teamworkGraph} isDisabled={!data.isAdmin || busy} onChange={toggleTwg} />
+          <Text>{data.settings.teamworkGraph ? 'On' : 'Off'}</Text>
+        </Inline>
+      </Stack>
+    </Stack>
+  );
+}
+
 function App() {
   const who = useResolver<{ accountId: string }>('whoami');
   if (who.loading) return <Loading what="DecisionGraph" />;
@@ -174,6 +250,7 @@ function App() {
           <Tab>My review queue</Tab>
           <Tab>Decisions</Tab>
           <Tab>Activity</Tab>
+          <Tab>Setup</Tab>
         </TabList>
         <TabPanel>
           <Box xcss={xcss({ paddingBlock: 'space.200', width: '100%' })}>
@@ -188,6 +265,11 @@ function App() {
         <TabPanel>
           <Box xcss={xcss({ paddingBlock: 'space.200', width: '100%' })}>
             <Activity />
+          </Box>
+        </TabPanel>
+        <TabPanel>
+          <Box xcss={xcss({ paddingBlock: 'space.200', width: '100%' })}>
+            <Setup />
           </Box>
         </TabPanel>
       </Tabs>
