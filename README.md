@@ -23,6 +23,10 @@ Built for **Codegeist 2026**, in the *Apps for Software Teams* category.
 | Rovo agent "Decision Keeper" | `rovo:agent` + `action` | Checks plans before acting; drafts decisions (never accepts them) |
 | MCP tools | `rovo:mcp` | `check-plan-tool`, `list-decisions`, `explain-decision` for Claude, Cursor and other external agents |
 
+## Impact analysis
+
+For any decision, **Show affected work** (Confluence macro, Decisions register) searches open Jira issues in its scope and lists those that already contradict it, with reasons. **Check impact on open work** in the decision form previews this before a decision is saved or superseded. Searches run as the current user (enhanced JQL search, capped at 200 issues).
+
 ## Rule types
 
 `forbid_terms` · `forbid_labels` · `forbid_components` · `restrict_transition` (optional freeze window, timezone-aware, wraps midnight) · `require_field`
@@ -54,7 +58,7 @@ Prerequisites: Node 22+, Forge CLI (`npm i -g @forge/cli`), an Atlassian develop
 
 ```bash
 npm install
-npm run check            # typecheck + 46 unit tests
+npm run check            # typecheck + 53 unit tests
 npm run lint:manifest    # offline manifest schema check
 
 forge login

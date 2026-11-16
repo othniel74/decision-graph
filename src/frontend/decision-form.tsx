@@ -18,6 +18,7 @@ import {
 import type { ConstraintKind, Decision } from '../domain/types';
 import { describeConstraint } from '../domain/describe';
 import { call, commaList } from './shared';
+import { ImpactList, type ImpactResult } from './impact';
 
 /**
  * Form for recording or superseding a decision with one or more enforceable constraints.
@@ -110,14 +111,12 @@ export function DecisionForm(props: DecisionFormProps) {
   const [rows, setRows] = useState<ConstraintRow[]>([emptyRow()]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [impact, setImpact] = useState<ImpactResult>();
 
   const previewScope = { projectKeys: commaList(projects), issueTypes: [], components: [], labels: commaList(scopeLabels) };
   const update = (i: number, patch: Partial<ConstraintRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
-  async function submit() {
-    setBusy(true);
-    setError(undefined);
-    const draft = {
+  const buildDraft = () => ({
       title,
       statement,
       rationale,
@@ -127,7 +126,21 @@ export function DecisionForm(props: DecisionFormProps) {
       constraints: rows.map(toConstraint),
       sourcePageId: props.sourcePageId ?? base?.sourcePageId,
       sourceUrl: props.sourceUrl ?? base?.sourceUrl,
-    };
+  });
+
+  async function checkImpact() {
+    setBusy(true);
+    setError(undefined);
+    const r = await call<ImpactResult>('previewImpact', { draft: buildDraft() });
+    setBusy(false);
+    if (!r.ok) return setError(r.error);
+    setImpact(r.data);
+  }
+
+  async function submit() {
+    setBusy(true);
+    setError(undefined);
+    const draft = buildDraft();
     const r = base
       ? await call<{ replacement: Decision }>('supersede', { id: base.id, draft })
       : await call<Decision>('createDecision', { draft });
@@ -229,7 +242,11 @@ export function DecisionForm(props: DecisionFormProps) {
       <Button appearance="subtle" onClick={() => setRows((rs) => [...rs, emptyRow()])}>
         Add another rule
       </Button>
+      {impact ? <ImpactList report={impact} /> : null}
       <ButtonGroup>
+        <Button isDisabled={busy} onClick={checkImpact}>
+          Check impact on open work
+        </Button>
         <Button appearance="primary" isDisabled={busy} onClick={submit}>
           {base ? 'Supersede decision' : 'Record decision'}
         </Button>

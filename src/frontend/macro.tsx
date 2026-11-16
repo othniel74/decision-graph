@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import ForgeReconciler, { Button, ButtonGroup, Inline, Stack, Text, useProductContext } from '@forge/react';
 import type { Decision } from '../domain/types';
 import { DecisionForm } from './decision-form';
+import { AffectedWork } from './impact';
 import { call, DecisionSummary, ErrorBox, Loading, useResolver } from './shared';
 
 interface PageData {
@@ -85,6 +86,7 @@ function App() {
         <Stack key={d.id} space="space.075">
           <DecisionSummary d={d} />
           <OwnerActions d={d} me={data.me} onChange={reload} onSupersede={() => setMode({ kind: 'supersede', d })} />
+          {d.status === 'accepted' ? <AffectedWork decisionId={d.id} /> : null}
         </Stack>
       ))}
       {past.length ? <Text size="small">History: {past.map((d) => `${d.title} (${d.status})`).join(' · ')}</Text> : null}

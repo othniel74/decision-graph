@@ -24,6 +24,7 @@ import type { Receipt } from '../domain/receipt';
 import type { Conflict } from '../storage/store';
 import type { HealthSummary } from '../services/audit';
 import { DecisionForm } from './decision-form';
+import { AffectedWork } from './impact';
 import { call, DecisionSummary, ErrorBox, Loading, StatusLozenge, useResolver, VerdictLozenge } from './shared';
 
 const tile = xcss({ padding: 'space.150', backgroundColor: 'color.background.neutral', borderRadius: 'radius.medium' });
@@ -101,7 +102,12 @@ function Register({ me }: { me: string }) {
         <Text>Every decision your teams have recorded, with who owns it.</Text>
         <Button appearance="primary" onClick={() => setMode('new')}>Record a decision</Button>
       </Inline>
-      {selected ? <DecisionSummary d={selected} /> : null}
+      {selected ? (
+        <Stack space="space.100">
+          <DecisionSummary d={selected} />
+          {selected.status === 'accepted' ? <AffectedWork key={selected.id} decisionId={selected.id} /> : null}
+        </Stack>
+      ) : null}
       <DynamicTable
         head={{ cells: ['Decision', 'Status', 'When broken', 'Owner', 'Scope', 'Updated'].map((c) => ({ key: c, content: c })) }}
         rows={rows}

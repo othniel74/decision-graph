@@ -2,7 +2,8 @@ import Resolver from '@forge/resolver';
 import { DomainError } from '../domain/lifecycle';
 import { str } from '../domain/validate';
 import type { DecisionStatus } from '../domain/types';
-import { fetchWorkItem, requiredFieldIds, isJiraAdmin, forgeDemoJira } from '../adapters/jira';
+import { fetchWorkItem, requiredFieldIds, isJiraAdmin, forgeDemoJira, forgeWorkSearch } from '../adapters/jira';
+import { decisionImpact, previewImpact } from '../services/impact';
 import { ownerTeams, pageOwnerAccountIds } from '../adapters/teamwork-graph';
 import { runCheck } from '../services/checks';
 import { changeStatus, createDecision, getDecisionWithHistory, listDecisions, supersedeDecision, decisionsDueForReview } from '../services/decisions';
@@ -146,6 +147,22 @@ resolver.define('updateSettings', async ({ payload, context }: Req) =>
 
 resolver.define('seedDemo', async ({ payload, context }: Req) =>
   safely(async () => seedDemo(deps(), forgeDemoJira, { projectKey: payload.projectKey, isAdmin: await isJiraAdmin() }, actor(context))),
+);
+
+/** Open work that already contradicts a saved decision (runs as the user). */
+resolver.define('decisionImpact', async ({ payload, context }: Req) =>
+  safely(async () => {
+    actor(context);
+    return decisionImpact(deps(), forgeWorkSearch, str(payload.id, 'id', { max: 64 }));
+  }),
+);
+
+/** What a draft decision would affect, before saving. Stores nothing. */
+resolver.define('previewImpact', async ({ payload, context }: Req) =>
+  safely(async () => {
+    actor(context);
+    return previewImpact(deps(), forgeWorkSearch, payload.draft);
+  }),
 );
 
 export const handler = resolver.getDefinitions();

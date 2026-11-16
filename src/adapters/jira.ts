@@ -155,3 +155,42 @@ export const forgeDemoJira = {
     return ((await res.json()) as { key: string }).key;
   },
 };
+
+/** Port used by impact analysis: list open work matching a JQL query, up to a cap. */
+export interface WorkSearch {
+  search(jql: string, extraFields: string[], cap: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+}
+
+const PAGE = 100;
+
+/**
+ * Enhanced JQL search (POST /rest/api/3/search/jql), paged by nextPageToken. Runs as the user,
+ * so people only see impact on work they can see. Stops on a repeated token, a known failure mode.
+ */
+export const forgeWorkSearch: WorkSearch = {
+  async search(jql, extraFields, cap) {
+    const items: WorkItem[] = [];
+    const seen = new Set<string>();
+    let token: string | undefined;
+    for (let page = 0; page < 20; page++) {
+      const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jql,
+          fields: [...BASE_FIELDS, ...extraFields],
+          maxResults: Math.min(PAGE, cap - items.length),
+          ...(token ? { nextPageToken: token } : {}),
+        }),
+      });
+      if (!res.ok) throw new JiraError(`Jira search failed (HTTP ${res.status}).`, res.status);
+      const body = (await res.json()) as { issues?: RawIssue[]; nextPageToken?: string; isLast?: boolean };
+      for (const issue of body.issues ?? []) items.push(toWorkItem(issue));
+      if (items.length >= cap) return { items: items.slice(0, cap), truncated: true };
+      if (body.isLast || !body.nextPageToken || seen.has(body.nextPageToken)) return { items, truncated: false };
+      seen.add(body.nextPageToken);
+      token = body.nextPageToken;
+    }
+    return { items, truncated: true };
+  },
+};
