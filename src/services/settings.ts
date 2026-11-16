@@ -1,5 +1,7 @@
 import { DomainError } from '../domain/lifecycle';
+import { strList } from '../domain/validate';
 import type { Deps } from './context';
+import { GRAPH_REFRESHED_KEY, STRONG_LINKS_KEY, graphPolicy } from './graph';
 
 /**
  * Site-level settings. Teamwork Graph enrichment is OFF by default: the API is in
@@ -10,10 +12,19 @@ export const TWG_KEY = 'teamworkGraph.enabled';
 
 export interface Settings {
   teamworkGraph: boolean;
+  /** Issue link names that carry decisions across, e.g. "Blocks". Parent and page links always do. */
+  strongIssueLinks: string[];
+  /** Last full refresh of the decision graph (read-only). */
+  graphRefreshedAt: string | null;
 }
 
 export async function getSettings(deps: Deps): Promise<Settings> {
-  return { teamworkGraph: (await deps.store.getSetting(TWG_KEY)) === 'true' };
+  const [twg, policy, refreshed] = await Promise.all([
+    deps.store.getSetting(TWG_KEY),
+    graphPolicy(deps),
+    deps.store.getSetting(GRAPH_REFRESHED_KEY),
+  ]);
+  return { teamworkGraph: twg === 'true', strongIssueLinks: policy.strongIssueLinks, graphRefreshedAt: refreshed };
 }
 
 export async function updateSettings(deps: Deps, patch: unknown, isAdmin: boolean): Promise<Settings> {
@@ -22,6 +33,10 @@ export async function updateSettings(deps: Deps, patch: unknown, isAdmin: boolea
   if ('teamworkGraph' in p) {
     if (typeof p.teamworkGraph !== 'boolean') throw new DomainError('teamworkGraph must be true or false.', 'INVALID');
     await deps.store.setSetting(TWG_KEY, String(p.teamworkGraph));
+  }
+  if ('strongIssueLinks' in p) {
+    const names = strList(p.strongIssueLinks, 'strongIssueLinks').slice(0, 20);
+    await deps.store.setSetting(STRONG_LINKS_KEY, JSON.stringify(names));
   }
   return getSettings(deps);
 }

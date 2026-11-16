@@ -91,6 +91,9 @@ export function DecisionSummary({ d }: { d: Decision }) {
           <Text weight="bold">{d.title}</Text>
           <StatusLozenge status={d.status} />
           <Lozenge appearance={d.enforcement === 'block' ? 'removed' : 'moved'}>{d.enforcement}</Lozenge>
+          {d.status === 'accepted' && d.trialUntil && Date.parse(d.trialUntil) > Date.now() ? (
+            <Lozenge appearance="new">Trial run until {d.trialUntil.slice(0, 10)}</Lozenge>
+          ) : null}
         </Inline>
         <Text>{d.statement}</Text>
         {d.rationale ? <Text size="small">Why: {d.rationale}</Text> : null}

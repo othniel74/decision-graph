@@ -1,6 +1,8 @@
 import api, { route } from '@forge/api';
 import type { Decision, WorkItem } from '../domain/types';
 import { adfDoc, adfToText } from './adf';
+import { confluencePageId, issueNode, pageNode, type Edge } from '../domain/graph';
+import type { GraphSource } from '../services/graph';
 
 export type As = 'user' | 'app';
 const client = (as: As) => (as === 'user' ? api.asUser() : api.asApp());
@@ -164,33 +166,105 @@ export interface WorkSearch {
 const PAGE = 100;
 
 /**
- * Enhanced JQL search (POST /rest/api/3/search/jql), paged by nextPageToken. Runs as the user,
- * so people only see impact on work they can see. Stops on a repeated token, a known failure mode.
+ * Enhanced JQL search (POST /rest/api/3/search/jql), paged by nextPageToken.
+ * Stops on a repeated token, a known failure mode of this endpoint.
  */
-export const forgeWorkSearch: WorkSearch = {
-  async search(jql, extraFields, cap) {
-    const items: WorkItem[] = [];
-    const seen = new Set<string>();
-    let token: string | undefined;
-    for (let page = 0; page < 20; page++) {
-      const res = await api.asUser().requestJira(route`/rest/api/3/search/jql`, {
-        method: 'POST',
-        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          jql,
-          fields: [...BASE_FIELDS, ...extraFields],
-          maxResults: Math.min(PAGE, cap - items.length),
-          ...(token ? { nextPageToken: token } : {}),
-        }),
-      });
-      if (!res.ok) throw new JiraError(`Jira search failed (HTTP ${res.status}).`, res.status);
-      const body = (await res.json()) as { issues?: RawIssue[]; nextPageToken?: string; isLast?: boolean };
-      for (const issue of body.issues ?? []) items.push(toWorkItem(issue));
-      if (items.length >= cap) return { items: items.slice(0, cap), truncated: true };
-      if (body.isLast || !body.nextPageToken || seen.has(body.nextPageToken)) return { items, truncated: false };
-      seen.add(body.nextPageToken);
-      token = body.nextPageToken;
-    }
-    return { items, truncated: true };
+function makeWorkSearch(as: As): WorkSearch {
+  return {
+    async search(jql, extraFields, cap) {
+      const items: WorkItem[] = [];
+      const seen = new Set<string>();
+      let token: string | undefined;
+      for (let page = 0; page < 20; page++) {
+        const res = await client(as).requestJira(route`/rest/api/3/search/jql`, {
+          method: 'POST',
+          headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            jql,
+            fields: [...BASE_FIELDS, ...extraFields],
+            maxResults: Math.min(PAGE, cap - items.length),
+            ...(token ? { nextPageToken: token } : {}),
+          }),
+        });
+        if (!res.ok) throw new JiraError(`Jira search failed (HTTP ${res.status}).`, res.status);
+        const body = (await res.json()) as { issues?: RawIssue[]; nextPageToken?: string; isLast?: boolean };
+        for (const issue of body.issues ?? []) items.push(toWorkItem(issue));
+        if (items.length >= cap) return { items: items.slice(0, cap), truncated: true };
+        if (body.isLast || !body.nextPageToken || seen.has(body.nextPageToken)) return { items, truncated: false };
+        seen.add(body.nextPageToken);
+        token = body.nextPageToken;
+      }
+      return { items, truncated: true };
+    },
+  };
+}
+
+/** Runs as the user, so people only see impact on work they can see. */
+export const forgeWorkSearch: WorkSearch = makeWorkSearch('user');
+/** Runs as the app, for background graph refresh. */
+export const appWorkSearch: WorkSearch = makeWorkSearch('app');
+
+
+// ---------- Graph source ----------
+
+interface RawLinks {
+  key: string;
+  fields: {
+    parent?: { key: string };
+    issuelinks?: {
+      type: { name: string; inward: string; outward: string };
+      inwardIssue?: { key: string };
+      outwardIssue?: { key: string };
+    }[];
+  };
+}
+
+interface RawRemoteLink {
+  globalId?: string;
+  application?: { type?: string; name?: string };
+  object?: { url?: string; title?: string };
+}
+
+/** Pure mapping from Jira's issue and remote-link payloads to graph edges. */
+export function edgesFromJira(issue: RawLinks, remote: RawRemoteLink[]): Edge[] {
+  const from = issueNode(issue.key);
+  const edges: Edge[] = [];
+  if (issue.fields.parent?.key) edges.push({ from, to: issueNode(issue.fields.parent.key), type: 'parent' });
+  for (const l of issue.fields.issuelinks ?? []) {
+    const other = l.outwardIssue?.key ?? l.inwardIssue?.key;
+    if (!other) continue;
+    const phrase = l.outwardIssue ? l.type.outward : l.type.inward;
+    edges.push({ from, to: issueNode(other), type: 'issue_link', linkType: l.type.name, toLabel: phrase });
+  }
+  for (const r of remote) {
+    const isConfluence = r.application?.type === 'com.atlassian.confluence' || /\/wiki\//.test(r.object?.url ?? '');
+    if (!isConfluence) continue;
+    const pageId = confluencePageId(r.globalId, r.object?.url);
+    if (pageId) edges.push({ from, to: pageNode(pageId), type: 'page_link', ...(r.object?.title ? { toLabel: r.object.title } : {}) });
+  }
+  // Deduplicate on (to, type): the table's key.
+  const seen = new Set<string>();
+  return edges.filter((e) => {
+    const k = `${e.to}|${e.type}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+}
+
+export const forgeGraphSource: GraphSource = {
+  async issueEdges(keyOrId) {
+    const res = await api.asApp().requestJira(route`/rest/api/3/issue/${keyOrId}?fields=parent,issuelinks`, { headers: { Accept: 'application/json' } });
+    if (res.status === 404) return null;
+    if (!res.ok) throw new JiraError(`Could not read links of ${keyOrId} (HTTP ${res.status}).`, res.status);
+    const issue = (await res.json()) as RawLinks;
+    const rl = await api.asApp().requestJira(route`/rest/api/3/issue/${issue.key}/remotelink`, { headers: { Accept: 'application/json' } });
+    const remote = rl.ok ? ((await rl.json()) as RawRemoteLink[]) : [];
+    return { key: issue.key, edges: edgesFromJira(issue, remote) };
+  },
+  async recentlyUpdated(days, cap) {
+    const d = Math.max(1, Math.min(365, Math.floor(days)));
+    const { items } = await appWorkSearch.search(`updated >= -${d}d ORDER BY updated DESC`, [], cap);
+    return items.map((i) => i.key).filter((k): k is string => Boolean(k));
   },
 };

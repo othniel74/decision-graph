@@ -66,7 +66,8 @@ function checkPlan(actorType: ActorType) {
       const res = o.result;
       const lines = [summarise(res)];
       for (const v of res.violations) {
-        lines.push(`Decision ${v.decisionId} "${v.decisionTitle}" (owner account ${v.ownerAccountId})${v.sourceUrl ? ` - ${v.sourceUrl}` : ''}`);
+        const via = v.via === 'connected' && v.path ? ` applies via ${v.path.join(' → ')}${v.capped ? ' (unconfirmed link, warning only)' : ''}` : '';
+        lines.push(`Decision ${v.decisionId} "${v.decisionTitle}" (owner account ${v.ownerAccountId})${via}${v.sourceUrl ? ` - ${v.sourceUrl}` : ''}`);
       }
       for (const c of o.conflicts) lines.push(`Conflict ${c.id} is open for the owner to review. To ask for an exception, call request-exception with this id.`);
       lines.push(`Verdict: ${res.verdict.toUpperCase()}. Receipt #${o.receipt?.sequence}.`);

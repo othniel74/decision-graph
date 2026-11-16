@@ -16,6 +16,7 @@ import ForgeReconciler, {
   Textfield,
   Toggle,
   Label,
+  HelperMessage,
   User,
   xcss,
 } from '@forge/react';
@@ -24,7 +25,8 @@ import type { Receipt } from '../domain/receipt';
 import type { Conflict } from '../storage/store';
 import type { HealthSummary } from '../services/audit';
 import { DecisionForm } from './decision-form';
-import { AffectedWork } from './impact';
+import { AffectedWork, TrialPanel } from './impact';
+import type { PathOverride } from '../domain/graph';
 import { call, DecisionSummary, ErrorBox, Loading, StatusLozenge, useResolver, VerdictLozenge } from './shared';
 
 const tile = xcss({ padding: 'space.150', backgroundColor: 'color.background.neutral', borderRadius: 'radius.medium' });
@@ -41,11 +43,18 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 }
 
 function ReviewQueue({ me }: { me: string }) {
-  const { loading, data, error, reload } = useResolver<Conflict[]>('reviewQueue');
+  const { loading, data: queue, error, reload } = useResolver<{ conflicts: Conflict[]; reports: PathOverride[] }>('reviewQueue');
   const [msg, setMsg] = useState<string>();
-  if (loading && !data) return <Loading what="your review queue" />;
+  if (loading && !queue) return <Loading what="your review queue" />;
   if (error) return <ErrorBox error={error} />;
-  if (!data?.length) return <Text>Nothing waiting on you. Conflicts with decisions you own will appear here.</Text>;
+  const data = queue?.conflicts ?? [];
+  const reports = queue?.reports ?? [];
+  if (!data.length && !reports.length) return <Text>Nothing waiting on you. Conflicts with decisions you own will appear here.</Text>;
+  const decide = async (o: PathOverride, state: 'confirmed' | 'excluded') => {
+    const r = await call('setPathOverride', { decisionId: o.decisionId, issueKey: o.issueKey, state });
+    setMsg(r.ok ? undefined : r.error);
+    void reload();
+  };
   const resolve = async (c: Conflict, resolution: string) => {
     const r = await call('resolveConflict', { conflictId: c.id, resolution, note: resolution === 'grant_exception' ? `Granted from review queue by ${me}` : undefined });
     setMsg(r.ok ? undefined : r.error);
@@ -54,6 +63,21 @@ function ReviewQueue({ me }: { me: string }) {
   return (
     <Stack space="space.150">
       {msg ? <Text color="color.text.danger">{msg}</Text> : null}
+      {reports.map((o) => (
+        <SectionMessage key={`${o.decisionId}-${o.issueKey}`} appearance="information" title={`${o.issueKey}: "not relevant" report`}>
+          <Stack space="space.075">
+            <Text>{o.note}</Text>
+            <Inline space="space.100" alignBlock="center">
+              <Text size="small">From</Text>
+              <User accountId={o.byAccountId} />
+            </Inline>
+            <Inline space="space.100">
+              <Button onClick={() => decide(o, 'excluded')}>Agree: doesn't apply</Button>
+              <Button appearance="subtle" onClick={() => decide(o, 'confirmed')}>It does apply</Button>
+            </Inline>
+          </Stack>
+        </SectionMessage>
+      ))}
       {data.map((c) => (
         <SectionMessage key={c.id} appearance="warning" title={c.issueKey ? `${c.issueKey}` : `Agent proposal in ${c.projectKey}`}>
           <Stack space="space.075">
@@ -105,6 +129,9 @@ function Register({ me }: { me: string }) {
       {selected ? (
         <Stack space="space.100">
           <DecisionSummary d={selected} />
+          {selected.status === 'accepted' && selected.trialUntil && Date.parse(selected.trialUntil) > Date.now() ? (
+            <TrialPanel key={`t-${selected.id}`} decisionId={selected.id} isOwner={selected.ownerAccountId === me} onEnforced={reload} />
+          ) : null}
           {selected.status === 'accepted' ? <AffectedWork key={selected.id} decisionId={selected.id} /> : null}
         </Stack>
       ) : null}
@@ -170,7 +197,7 @@ function Activity() {
 }
 
 interface SetupData {
-  settings: { teamworkGraph: boolean };
+  settings: { teamworkGraph: boolean; strongIssueLinks: string[]; graphRefreshedAt: string | null };
   isAdmin: boolean;
   demoLoaded: boolean;
 }
@@ -178,6 +205,7 @@ interface SetupData {
 function Setup() {
   const { loading, data, error, reload } = useResolver<SetupData>('setup');
   const [projectKey, setProjectKey] = useState('');
+  const [links, setLinks] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<{ ok: boolean; text: string }>();
   if (loading && !data) return <Loading what="setup" />;
@@ -188,6 +216,14 @@ function Setup() {
     const r = await call('updateSettings', { patch: { teamworkGraph: !data.settings.teamworkGraph } });
     setBusy(false);
     setMsg(r.ok ? undefined : { ok: false, text: r.error });
+    void reload();
+  };
+  const saveLinks = async () => {
+    setBusy(true);
+    const names = (links ?? '').split(',').map((x) => x.trim()).filter(Boolean);
+    const r = await call('updateSettings', { patch: { strongIssueLinks: names } });
+    setBusy(false);
+    setMsg(r.ok ? { ok: true, text: 'Link settings saved.' } : { ok: false, text: r.error });
     void reload();
   };
   const seed = async () => {
@@ -228,6 +264,32 @@ function Setup() {
             </Button>
           </Inline>
         )}
+      </Stack>
+
+      <Stack space="space.100">
+        <Heading size="small">Linked work</Heading>
+        <Text>
+          Decisions recorded on a Confluence page also apply to issues linked to that page, and to issues under an epic or parent linked to it (up to two steps). Matches found this way only warn until the owner confirms them.
+        </Text>
+        <Text size="small">
+          Links last fully refreshed: {data.settings.graphRefreshedAt ? new Date(data.settings.graphRefreshedAt).toLocaleString() : 'not yet (runs shortly after install, then daily)'}
+        </Text>
+        <Stack space="space.050">
+          <Label labelFor="dg-strong-links">Issue link types that also carry decisions (comma separated)</Label>
+          <Inline space="space.100" alignBlock="end">
+            <Textfield
+              id="dg-strong-links"
+              placeholder="Blocks, Cloners"
+              value={links ?? data.settings.strongIssueLinks.join(', ')}
+              onChange={(e) => setLinks(e.target.value)}
+              isDisabled={!data.isAdmin}
+            />
+            <Button isDisabled={!data.isAdmin || busy || links === undefined} onClick={saveLinks}>
+              Save
+            </Button>
+          </Inline>
+          <HelperMessage>Use Jira's link type names, e.g. Blocks. Leave empty to ignore issue links.</HelperMessage>
+        </Stack>
       </Stack>
 
       <Stack space="space.100">

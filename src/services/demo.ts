@@ -93,15 +93,10 @@ export async function seedDemo(deps: Deps, jira: DemoJira, input: { projectKey: 
   if (await demoLoaded(deps)) throw new DomainError('Demo data is already loaded on this site.', 'CONFLICT');
 
   const ts = deps.now().toISOString();
-  const decisions: Decision[] = demoDrafts(projectKey, actorAccountId).map((raw) => ({
-    ...parseDecisionDraft(raw, deps.newId),
-    id: deps.newId(),
-    status: 'accepted',
-    demo: true,
-    createdAt: ts,
-    updatedAt: ts,
-    version: 1,
-  }));
+  const decisions: Decision[] = demoDrafts(projectKey, actorAccountId).map((raw) => {
+    const { trialDays: _ignored, ...draft } = parseDecisionDraft(raw, deps.newId);
+    return { ...draft, id: deps.newId(), status: 'accepted', demo: true, createdAt: ts, updatedAt: ts, version: 1 };
+  });
   for (const d of decisions) await deps.store.insertDecision(d);
 
   const issues: DemoResult['issues'] = [];

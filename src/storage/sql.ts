@@ -2,6 +2,7 @@ import { sql, migrationRunner, ForgeSQLAPIError } from '@forge/sql';
 import { DomainError } from '../domain/lifecycle';
 import type { Decision, DecisionException } from '../domain/types';
 import type { Receipt } from '../domain/receipt';
+import type { Edge, PathOverride } from '../domain/graph';
 import type { Conflict, DecisionFilter, Store } from './store';
 
 /**
@@ -69,6 +70,30 @@ const MIGRATIONS: [string, string][] = [
       setting_key VARCHAR(64) PRIMARY KEY,
       setting_value VARCHAR(1024) NOT NULL,
       updated_at VARCHAR(32) NOT NULL
+    )`,
+  ],
+  [
+    'v006_edges',
+    `CREATE TABLE IF NOT EXISTS graph_edges (
+      from_node VARCHAR(160) NOT NULL,
+      to_node VARCHAR(160) NOT NULL,
+      edge_type VARCHAR(16) NOT NULL,
+      link_type VARCHAR(100) NULL,
+      to_label VARCHAR(255) NULL,
+      updated_at VARCHAR(32) NOT NULL,
+      PRIMARY KEY (from_node, to_node, edge_type),
+      INDEX idx_edges_to (to_node)
+    )`,
+  ],
+  [
+    'v007_path_overrides',
+    `CREATE TABLE IF NOT EXISTS path_overrides (
+      decision_id VARCHAR(64) NOT NULL,
+      issue_key VARCHAR(64) NOT NULL,
+      state VARCHAR(16) NOT NULL,
+      body LONGTEXT NOT NULL,
+      PRIMARY KEY (decision_id, issue_key),
+      INDEX idx_overrides_issue (issue_key)
     )`,
   ],
 ];
@@ -232,6 +257,78 @@ export class SqlStore implements Store {
     await sql
       .prepare('INSERT INTO settings (setting_key, setting_value, updated_at) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value), updated_at = VALUES(updated_at)')
       .bindParams(key, value, new Date().toISOString())
+      .execute();
+  }
+
+  async replaceEdgesFrom(from: string, edges: Edge[], at: string): Promise<void> {
+    if (edges.some((e) => e.from !== from)) throw new DomainError('Edge does not start at the replaced node.', 'INVALID');
+    // No transactions in Forge SQL: delete then insert. A reader in between sees fewer edges,
+    // which can only make a check quieter, never stricter.
+    await sql.prepare('DELETE FROM graph_edges WHERE from_node = ?').bindParams(from).execute();
+    for (const e of edges) {
+      await sql
+        .prepare(
+          'INSERT INTO graph_edges (from_node, to_node, edge_type, link_type, to_label, updated_at) VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE link_type = VALUES(link_type), to_label = VALUES(to_label), updated_at = VALUES(updated_at)',
+        )
+        .bindParams(e.from, e.to, e.type, e.linkType?.slice(0, 100) ?? null, e.toLabel?.slice(0, 255) ?? null, at)
+        .execute();
+    }
+  }
+
+  async listEdgesFrom(nodes: string[]): Promise<Edge[]> {
+    if (nodes.length === 0) return [];
+    const res = await sql
+      .prepare<{ from_node: string; to_node: string; edge_type: Edge['type']; link_type: string | null; to_label: string | null }>(
+        `SELECT from_node, to_node, edge_type, link_type, to_label FROM graph_edges WHERE from_node IN (${placeholders(nodes.length)}) LIMIT 2000`,
+      )
+      .bindParams(...nodes)
+      .execute();
+    return res.rows.map((r) => ({
+      from: r.from_node,
+      to: r.to_node,
+      type: r.edge_type,
+      ...(r.link_type ? { linkType: r.link_type } : {}),
+      ...(r.to_label ? { toLabel: r.to_label } : {}),
+    }));
+  }
+
+  async listEdgesTo(nodes: string[]): Promise<Edge[]> {
+    if (nodes.length === 0) return [];
+    const res = await sql
+      .prepare<{ from_node: string; to_node: string; edge_type: Edge['type']; link_type: string | null; to_label: string | null }>(
+        `SELECT from_node, to_node, edge_type, link_type, to_label FROM graph_edges WHERE to_node IN (${placeholders(nodes.length)}) LIMIT 2000`,
+      )
+      .bindParams(...nodes)
+      .execute();
+    return res.rows.map((r) => ({
+      from: r.from_node,
+      to: r.to_node,
+      type: r.edge_type,
+      ...(r.link_type ? { linkType: r.link_type } : {}),
+      ...(r.to_label ? { toLabel: r.to_label } : {}),
+    }));
+  }
+
+  async listOverrides(f: { issueKey?: string; decisionId?: string }): Promise<PathOverride[]> {
+    const where: string[] = [];
+    const params: string[] = [];
+    if (f.issueKey) {
+      where.push('issue_key = ?');
+      params.push(f.issueKey);
+    }
+    if (f.decisionId) {
+      where.push('decision_id = ?');
+      params.push(f.decisionId);
+    }
+    const q = `SELECT body FROM path_overrides ${where.length ? `WHERE ${where.join(' AND ')}` : ''} LIMIT 500`;
+    const res = await sql.prepare<BodyRow>(q).bindParams(...params).execute();
+    return parse<PathOverride>(res.rows);
+  }
+
+  async putOverride(o: PathOverride): Promise<void> {
+    await sql
+      .prepare('INSERT INTO path_overrides (decision_id, issue_key, state, body) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE state = VALUES(state), body = VALUES(body)')
+      .bindParams(o.decisionId, o.issueKey, o.state, JSON.stringify(o))
       .execute();
   }
 

@@ -12,7 +12,8 @@ import ForgeReconciler, {
   User,
   Lozenge,
 } from '@forge/react';
-import type { CheckResult, Decision, DecisionException } from '../domain/types';
+import type { CheckResult, Decision, DecisionException, Violation } from '../domain/types';
+import type { PathOverride } from '../domain/graph';
 import type { Conflict } from '../storage/store';
 import type { TeamRef } from '../adapters/teamwork-graph';
 import { call, DecisionSummary, ErrorBox, Loading, useResolver, VerdictLozenge } from './shared';
@@ -24,7 +25,49 @@ interface PanelData {
   applicable: Decision[];
   conflicts: Conflict[];
   exceptions: DecisionException[];
+  overrides: PathOverride[];
   ownerTeams: Record<string, TeamRef[]>;
+}
+
+/** Why a linked decision applies here, and what the owner or anyone else can do about the link. */
+function LinkControls({ v, issueKey, me, override, onChange }: { v: Violation; issueKey: string; me: string; override?: PathOverride; onChange: () => void }) {
+  const [note, setNote] = useState('');
+  const [open, setOpen] = useState(false);
+  const [error, setError] = useState<string>();
+  const isOwner = v.ownerAccountId === me;
+  const set = async (state: string) => {
+    const r = await call('setPathOverride', { decisionId: v.decisionId, issueKey, state, note });
+    if (!r.ok) return setError(r.error);
+    setOpen(false);
+    setNote('');
+    onChange();
+  };
+  return (
+    <Stack space="space.075">
+      <Text size="small">Applies via {v.path?.join(' → ')}</Text>
+      {v.capped ? <Text size="small">Warning only: this link was found automatically and the owner hasn't confirmed it.</Text> : null}
+      {override?.state === 'reported' ? <Text size="small">Reported as not relevant: {override.note}</Text> : null}
+      {error ? <Text color="color.text.danger">{error}</Text> : null}
+      {isOwner ? (
+        <ButtonGroup>
+          {override?.state !== 'confirmed' ? (
+            <Button appearance="subtle" onClick={() => set('confirmed')}>Confirm link (may block)</Button>
+          ) : null}
+          <Button appearance="subtle" onClick={() => set('excluded')}>Doesn't apply to this issue</Button>
+        </ButtonGroup>
+      ) : open ? (
+        <Stack space="space.050">
+          <TextArea placeholder="Why doesn't this decision belong on this issue?" value={note} onChange={(e) => setNote(e.target.value)} />
+          <ButtonGroup>
+            <Button isDisabled={!note.trim()} onClick={() => set('reported')}>Tell the owner</Button>
+            <Button appearance="subtle" onClick={() => setOpen(false)}>Cancel</Button>
+          </ButtonGroup>
+        </Stack>
+      ) : (
+        <Button appearance="subtle" onClick={() => setOpen(true)}>Not relevant?</Button>
+      )}
+    </Stack>
+  );
 }
 
 function ConflictCard({ c, d, me, onChange }: { c: Conflict; d?: Decision; me: string; onChange: () => void }) {
@@ -130,9 +173,26 @@ function App() {
                 </Link>
               ) : null}
             </Inline>
+            {v.via === 'connected' ? (
+              <LinkControls v={v} issueKey={data.issueKey} me={data.me} override={data.overrides.find((o) => o.decisionId === v.decisionId)} onChange={reload} />
+            ) : null}
           </Stack>
         </SectionMessage>
       ))}
+
+      {result.graphStale ? (
+        <SectionMessage appearance="information">
+          <Text>Link data is being refreshed, so decisions that apply through linked pages are paused for now.</Text>
+        </SectionMessage>
+      ) : null}
+
+      {result.shadow.length ? (
+        <SectionMessage appearance="discovery" title="Trial run">
+          <Text>
+            {[...new Set(result.shadow.map((v) => v.decisionTitle))].join(', ')} would flag this work once enforced. Nothing is blocked during the trial.
+          </Text>
+        </SectionMessage>
+      ) : null}
 
       {result.waived.length ? (
         <SectionMessage appearance="information" title="Covered by an exception">

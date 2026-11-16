@@ -14,6 +14,7 @@ import {
   Textfield,
   UserPicker,
   HelperMessage,
+  Checkbox,
 } from '@forge/react';
 import type { ConstraintKind, Decision } from '../domain/types';
 import { describeConstraint } from '../domain/describe';
@@ -33,6 +34,13 @@ const KINDS: Opt[] = [
   { label: 'Work must not be in components…', value: 'forbid_components' },
   { label: 'Restrict moving to a status (optional freeze window)', value: 'restrict_transition' },
   { label: 'Require a field before a status', value: 'require_field' },
+];
+
+const REACH: Opt[] = [
+  { label: 'Automatic: linked work, plus the projects and labels below if set', value: 'auto' },
+  { label: 'Only work linked to this page', value: 'connected' },
+  { label: 'Only the projects and labels below', value: 'scope' },
+  { label: 'Both', value: 'both' },
 ];
 
 const DAYS: Opt[] = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => ({ label: d, value: String(i) }));
@@ -109,6 +117,9 @@ export function DecisionForm(props: DecisionFormProps) {
   const [projects, setProjects] = useState(base?.scope.projectKeys.join(', ') ?? '');
   const [scopeLabels, setScopeLabels] = useState(base?.scope.labels.join(', ') ?? '');
   const [rows, setRows] = useState<ConstraintRow[]>([emptyRow()]);
+  const [trial, setTrial] = useState(!base);
+  const sourcePage = props.sourcePageId ?? base?.sourcePageId;
+  const [reach, setReach] = useState<string>(base?.reach ?? 'auto');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [impact, setImpact] = useState<ImpactResult>();
@@ -124,8 +135,10 @@ export function DecisionForm(props: DecisionFormProps) {
       enforcement,
       scope: { projectKeys: commaList(projects), labels: commaList(scopeLabels) },
       constraints: rows.map(toConstraint),
-      sourcePageId: props.sourcePageId ?? base?.sourcePageId,
+      sourcePageId: sourcePage,
       sourceUrl: props.sourceUrl ?? base?.sourceUrl,
+      reach: reach === 'auto' ? undefined : reach,
+      trialDays: trial ? 7 : 0,
   });
 
   async function checkImpact() {
@@ -190,6 +203,25 @@ export function DecisionForm(props: DecisionFormProps) {
           />
         </Stack>
       </Inline>
+
+      {sourcePage ? (
+        <Stack space="space.050">
+          <Label labelFor="dg-reach">Which work does it apply to?</Label>
+          <Select
+            inputId="dg-reach"
+            value={REACH.find((r) => r.value === reach)}
+            options={REACH}
+            onChange={(o: Opt) => setReach(o.value)}
+          />
+          <HelperMessage>Linked work = issues linked to this page, and issues under an epic or parent linked to it.</HelperMessage>
+        </Stack>
+      ) : null}
+      <Checkbox
+        id="dg-trial"
+        label="Start with a 7-day trial run: record what it would flag, without blocking or notifying anyone"
+        isChecked={trial}
+        onChange={() => setTrial((t) => !t)}
+      />
 
       <Heading size="xsmall">Rules that enforce it</Heading>
       {rows.map((r, i) => (

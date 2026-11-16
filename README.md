@@ -17,11 +17,25 @@ Built for **Codegeist 2026**, in the *Apps for Software Teams* category.
 |---|---|---|
 | Issue panel "Decisions" | `jira:issuePanel` | Live verdict, violations with evidence and owner (plus owner's teams from Teamwork Graph), exception requests, owner actions |
 | Workflow validator | `jira:workflowValidator` | Blocks transitions that break a `block` decision and explains why |
-| Issue events | `trigger` | Create and edit can't be blocked, so conflicts are recorded and the owner is @mentioned |
+| Issue events | `trigger` | Create and edit can't be blocked, so conflicts are recorded and the owner is @mentioned; links refreshed |
+| Issue-link events, daily sweep | `trigger`, `scheduledTrigger` | Keep the decision graph current |
 | Confluence macro "Decision record" | `macro` | Record, accept, supersede or retire decisions on the page where they were made; owner suggested via Teamwork Graph |
-| Global page "DecisionGraph" | `jira:globalPage` | Owner review queue, decision register, activity and audit verification, Setup (demo data, Teamwork Graph switch) |
+| Global page "DecisionGraph" | `jira:globalPage` | Owner review queue (conflicts and "not relevant" reports), decision register, activity and audit verification, Setup (demo data, linked-work settings, Teamwork Graph switch) |
 | Rovo agent "Decision Keeper" | `rovo:agent` + `action` | Checks plans before acting; drafts decisions (never accepts them) |
 | MCP tools | `rovo:mcp` | `check-plan-tool`, `list-decisions`, `explain-decision` for Claude, Cursor and other external agents |
+
+## Linked work (the decision graph)
+
+A decision recorded on a Confluence page also applies to work that is **connected** to that page: issues linked to the page, and issues whose parent or epic is linked to it (up to two steps). Issue links such as *Blocks* carry decisions only if an admin names them in **Setup**. The links come from standard Jira data (parent, issue links, Confluence remote links), stored in Forge SQL and refreshed on issue and issue-link events, before the issue panel opens, on install (last 30 days of work) and daily.
+
+Guards against false alarms and inconsistency:
+
+- **Two gates.** A connection only makes a decision relevant; one of its rules must still fire.
+- **Inferred matches warn.** A decision reaching work through links only warns, until the owner confirms that link (then it may block). The owner can also exclude it for that issue. Anyone can report a link as not relevant; that is feedback for the owner and changes nothing on its own.
+- **Every match explains itself**, e.g. *applies via PAY-7 → parent PAY-12 → page "Payments Architecture"*. Paths are stored on receipts with the graph's refresh time.
+- **Stale data never escalates.** If the last full refresh is older than 48 hours, linked matching switches off and only scopes apply.
+- **Trial runs.** New decisions can start with a 7-day trial: conflicts are recorded as *would have flagged*, with no blocking or notifications. The owner reviews them and can enforce early.
+- **Negation-aware text rules.** "We must not store card numbers" doesn't trigger a *store card* rule; owners can list allowed phrases.
 
 ## Impact analysis
 
@@ -58,7 +72,7 @@ Prerequisites: Node 22+, Forge CLI (`npm i -g @forge/cli`), an Atlassian develop
 
 ```bash
 npm install
-npm run check            # typecheck + 53 unit tests
+npm run check            # typecheck + 83 unit tests
 npm run lint:manifest    # offline manifest schema check
 
 forge login

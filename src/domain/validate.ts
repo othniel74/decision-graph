@@ -3,7 +3,7 @@
  * Hand-written to keep the Forge bundle small and errors user-readable.
  */
 import { DomainError } from './lifecycle';
-import type { Constraint, DecisionScope, Enforcement, FreezeWindow, TextField } from './types';
+import type { Constraint, DecisionScope, Enforcement, FreezeWindow, Reach, TextField } from './types';
 
 const MAX_TEXT = 4000;
 const MAX_LIST = 50;
@@ -89,7 +89,8 @@ export function parseConstraint(v: unknown, id: string): Constraint {
     case 'forbid_terms': {
       const fields = v.fields === undefined ? TEXT_FIELDS : strList(v.fields, 'fields', { min: 1 });
       for (const f of fields) if (!TEXT_FIELDS.includes(f as TextField)) fail(`Unknown text field "${f}".`);
-      return { kind: 'forbid_terms', id, terms: strList(v.terms, 'terms', { min: 1 }), fields: fields as TextField[] };
+      const allow = strList(v.allow, 'allow');
+      return { kind: 'forbid_terms', id, terms: strList(v.terms, 'terms', { min: 1 }), fields: fields as TextField[], ...(allow.length ? { allow } : {}) };
     }
     case 'forbid_labels':
       return { kind: 'forbid_labels', id, labels: strList(v.labels, 'labels', { min: 1 }) };
@@ -126,6 +127,9 @@ export interface DecisionDraft {
   sourceUrl?: string;
   sourcePageId?: string;
   reviewBy?: string;
+  reach?: Reach;
+  /** Days of trial run before enforcement (0 = enforce at once). */
+  trialDays: number;
 }
 
 /** Validate a decision draft. `newId` mints constraint ids so callers cannot inject their own. */
@@ -149,5 +153,13 @@ export function parseDecisionDraft(v: unknown, newId: () => string): DecisionDra
     sourceUrl: sourceUrl || undefined,
     sourcePageId: str(v.sourcePageId, 'sourcePageId', { required: false, max: 64 }) || undefined,
     reviewBy: reviewBy || undefined,
+    reach: parseReach(v.reach),
+    trialDays: v.trialDays === undefined ? 0 : intIn(v.trialDays, 'trialDays', 0, 30),
   };
+}
+
+function parseReach(v: unknown): Reach | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (v === 'scope' || v === 'connected' || v === 'both') return v;
+  fail('reach must be "scope", "connected" or "both".');
 }

@@ -4,6 +4,7 @@ import { buildReceipt, type Receipt } from '../domain/receipt';
 import type { CheckResult, Decision, ProposedAction, Violation } from '../domain/types';
 import type { Conflict } from '../storage/store';
 import type { Deps } from './context';
+import { connectionsForItem } from './graph';
 
 export interface CheckOutcome {
   result: CheckResult;
@@ -13,10 +14,10 @@ export interface CheckOutcome {
 
 const MAX_RECEIPT_RETRIES = 5;
 
-async function appendReceipt(deps: Deps, action: ProposedAction, result: CheckResult): Promise<Receipt> {
+async function appendReceipt(deps: Deps, action: ProposedAction, result: CheckResult, graphAt: string | null): Promise<Receipt> {
   for (let attempt = 0; attempt < MAX_RECEIPT_RETRIES; attempt++) {
     const prev = await deps.store.latestReceipt();
-    const receipt = buildReceipt(action, result, prev, deps.newId());
+    const receipt = buildReceipt(action, result, prev, deps.newId(), graphAt);
     try {
       await deps.store.insertReceipt(receipt);
       return receipt;
@@ -29,15 +30,22 @@ async function appendReceipt(deps: Deps, action: ProposedAction, result: CheckRe
 }
 
 /**
- * Open one conflict per violated decision per work item. An existing open conflict
- * for the same decision and issue is reused, so repeated attempts don't spam owners.
+ * Open one conflict per violated decision per work item. An existing conflict with the same
+ * status for the same decision and issue is reused, so repeated attempts don't spam owners.
+ * Trial-run ("shadow") conflicts are kept separately and never notified.
  */
-async function openConflicts(deps: Deps, action: ProposedAction, violations: Violation[], receiptId: string): Promise<Conflict[]> {
+async function openConflicts(
+  deps: Deps,
+  action: ProposedAction,
+  violations: Violation[],
+  receiptId: string,
+  status: 'open' | 'shadow' = 'open',
+): Promise<Conflict[]> {
   const byDecision = new Map<string, Violation[]>();
   for (const v of violations) byDecision.set(v.decisionId, [...(byDecision.get(v.decisionId) ?? []), v]);
 
   const existing = action.item.key
-    ? await deps.store.listConflicts({ status: 'open', issueKey: action.item.key, limit: 100 })
+    ? await deps.store.listConflicts({ status, issueKey: action.item.key, limit: 100 })
     : [];
 
   const out: Conflict[] = [];
@@ -57,7 +65,8 @@ async function openConflicts(deps: Deps, action: ProposedAction, violations: Vio
       actorName: action.actorName,
       message: vs.map((v) => v.message).join(' '),
       evidence: vs.flatMap((v) => v.evidence),
-      status: 'open',
+      ...(vs[0].path ? { path: vs[0].path } : {}),
+      status,
       receiptId,
       createdAt: deps.now().toISOString(),
     };
@@ -82,12 +91,13 @@ export async function runCheck(deps: Deps, action: ProposedAction, opts: CheckOp
     opts.decisions ? Promise.resolve(opts.decisions.filter((d) => d.status === 'accepted')) : deps.store.listDecisions({ statuses: ['accepted'] }),
     action.item.key ? deps.store.listExceptions({ issueKey: action.item.key }) : Promise.resolve([]),
   ]);
-  const result = check({ action, decisions, exceptions, now: deps.now() });
+  const graph = await connectionsForItem(deps, action.item.key, decisions);
+  const result = check({ action, decisions, exceptions, now: deps.now(), connections: graph.connections, graphStale: graph.stale });
   if (!record) return { result, receipt: null, conflicts: [] };
 
-  const receipt = await appendReceipt(deps, action, result);
-  const conflicts = (opts.openConflicts ?? true) && result.violations.length
-    ? await openConflicts(deps, action, result.violations, receipt.id)
-    : [];
+  const receipt = await appendReceipt(deps, action, result, graph.connections.size ? graph.graphAt : null);
+  const wantConflicts = opts.openConflicts ?? true;
+  const conflicts = wantConflicts && result.violations.length ? await openConflicts(deps, action, result.violations, receipt.id) : [];
+  if (wantConflicts && result.shadow.length) await openConflicts(deps, action, result.shadow, receipt.id, 'shadow');
   return { result, receipt, conflicts };
 }

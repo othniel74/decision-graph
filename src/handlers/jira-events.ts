@@ -1,13 +1,14 @@
 import { summarise } from '../domain/engine';
 import type { ProposedAction } from '../domain/types';
-import { fetchWorkItem, normaliseModifiedFields, notifyOwnerOnIssue, requiredFieldIds, statusName } from '../adapters/jira';
+import { fetchWorkItem, normaliseModifiedFields, notifyOwnerOnIssue, requiredFieldIds, statusName, forgeGraphSource } from '../adapters/jira';
+import { refreshIssue, sweep } from '../services/graph';
 import { runCheck, type CheckOutcome } from '../services/checks';
 import { deps, failClosed } from './runtime';
 
 const WATCHED_FIELDS = new Set(['summary', 'description', 'labels', 'Component', 'components']);
 
 async function notifyNewConflicts(outcome: CheckOutcome): Promise<void> {
-  const fresh = outcome.conflicts.filter((c) => c.receiptId === outcome.receipt.id && c.issueKey);
+  const fresh = outcome.conflicts.filter((c) => c.receiptId === outcome.receipt.id && c.issueKey && c.status === 'open');
   for (const c of fresh) {
     const v = outcome.result.violations.find((x) => x.decisionId === c.decisionId);
     if (v && c.issueKey) await notifyOwnerOnIssue(c.issueKey, v.ownerAccountId, v.decisionTitle, v.message);
@@ -57,6 +58,12 @@ interface IssueEvent {
  */
 export async function onIssueEvent(event: IssueEvent): Promise<void> {
   const isCreate = event.eventType === 'avi:jira:created:issue';
+  // Keep the graph current for this issue on every create or edit (parent and links may have changed).
+  try {
+    await refreshIssue(deps(), forgeGraphSource, event.issue.key);
+  } catch (e) {
+    console.warn(`graph refresh failed for ${event.issue?.key}: ${(e as Error).message}`);
+  }
   if (!isCreate) {
     const items = event.changelog?.items ?? [];
     if (!items.some((i) => WATCHED_FIELDS.has(i.field) || WATCHED_FIELDS.has(i.fieldId ?? ''))) return;
@@ -71,4 +78,34 @@ export async function onIssueEvent(event: IssueEvent): Promise<void> {
   } catch (e) {
     console.error(`onIssueEvent failed for ${event.issue?.key}`, e);
   }
+}
+
+interface IssueLinkEvent {
+  eventType: string;
+  issueLink?: { sourceIssueId?: string | number; destinationIssueId?: string | number };
+}
+
+/** avi:jira:created:issuelink / avi:jira:deleted:issuelink: refresh both ends of the link. */
+export async function onIssueLinkEvent(event: IssueLinkEvent): Promise<void> {
+  const ids = [event.issueLink?.sourceIssueId, event.issueLink?.destinationIssueId]
+    .filter((x): x is string | number => x !== undefined && x !== null)
+    .map(String)
+    .filter((x) => /^\d+$/.test(x));
+  for (const id of ids) {
+    try {
+      await refreshIssue(deps(), forgeGraphSource, id);
+    } catch (e) {
+      console.warn(`graph refresh failed for issue id ${id}: ${(e as Error).message}`);
+    }
+  }
+}
+
+/**
+ * Daily (and on install) refresh of recently changed work. On install it looks back 30 days so the
+ * graph is useful at once; daily runs look back 2 days. Marks the graph fresh only on full success.
+ */
+export async function graphSweep(event?: { eventType?: string }): Promise<void> {
+  const installing = event?.eventType === 'avi:forge:installed:app';
+  const r = await sweep(deps(), forgeGraphSource, { days: installing ? 30 : 2, cap: installing ? 1000 : 500 });
+  console.log(`graph sweep: ${r.refreshed} refreshed, ${r.failed} failed`);
 }

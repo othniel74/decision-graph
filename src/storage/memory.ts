@@ -1,6 +1,7 @@
 import { DomainError } from '../domain/lifecycle';
 import type { Decision, DecisionException } from '../domain/types';
 import type { Receipt } from '../domain/receipt';
+import type { Edge, PathOverride } from '../domain/graph';
 import type { Conflict, DecisionFilter, Store } from './store';
 
 const clone = <T>(v: T): T => structuredClone(v);
@@ -11,6 +12,27 @@ export class MemoryStore implements Store {
   receipts: Receipt[] = [];
   conflicts = new Map<string, Conflict>();
   settings = new Map<string, string>();
+  edges: Edge[] = [];
+  overrides: PathOverride[] = [];
+
+  async replaceEdgesFrom(from: string, edges: Edge[]) {
+    if (edges.some((e) => e.from !== from)) throw new DomainError('Edge does not start at the replaced node.', 'INVALID');
+    this.edges = [...this.edges.filter((e) => e.from !== from), ...edges.map(clone)];
+  }
+  async listEdgesFrom(nodes: string[]) {
+    const set = new Set(nodes);
+    return this.edges.filter((e) => set.has(e.from)).map(clone);
+  }
+  async listEdgesTo(nodes: string[]) {
+    const set = new Set(nodes);
+    return this.edges.filter((e) => set.has(e.to)).map(clone);
+  }
+  async listOverrides(f: { issueKey?: string; decisionId?: string }) {
+    return this.overrides.filter((o) => (!f.issueKey || o.issueKey === f.issueKey) && (!f.decisionId || o.decisionId === f.decisionId)).map(clone);
+  }
+  async putOverride(o: PathOverride) {
+    this.overrides = [...this.overrides.filter((x) => !(x.decisionId === o.decisionId && x.issueKey === o.issueKey)), clone(o)];
+  }
 
   async getSetting(key: string) {
     return this.settings.get(key) ?? null;

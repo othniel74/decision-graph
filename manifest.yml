@@ -42,16 +42,28 @@ modules:
       events:
         - avi:jira:created:issue
         - avi:jira:updated:issue
+    - key: decisiongraph-issue-links
+      function: on-issue-link-event
+      events:
+        - avi:jira:created:issuelink
+        - avi:jira:deleted:issuelink
     - key: decisiongraph-lifecycle
       function: migrate
       events:
         - avi:forge:installed:app
         - avi:forge:upgraded:app
+    - key: decisiongraph-graph-install
+      function: graph-sweep
+      events:
+        - avi:forge:installed:app
 
   scheduledTrigger:
     - key: decisiongraph-migrate-hourly
       function: migrate
       interval: hour
+    - key: decisiongraph-graph-daily
+      function: graph-sweep
+      interval: day
 
   sql:
     - key: main
@@ -271,6 +283,11 @@ modules:
       handler: index.onIssueEvent
     - key: migrate
       handler: index.migrate
+      timeoutSeconds: 900
+    - key: on-issue-link-event
+      handler: index.onIssueLinkEvent
+    - key: graph-sweep
+      handler: index.graphSweep
       timeoutSeconds: 900
     - key: check-plan-rovo-fn
       handler: index.checkPlanRovo

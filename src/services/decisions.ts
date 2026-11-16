@@ -1,11 +1,14 @@
-import { DomainError, history, supersede, transition, dueForReview } from '../domain/lifecycle';
+import { DomainError, history, supersede, transition, dueForReview, startTrial, endTrial } from '../domain/lifecycle';
 import { parseDecisionDraft, type DecisionDraft } from '../domain/validate';
 import type { Decision, DecisionStatus } from '../domain/types';
 import type { Deps } from './context';
 
-function fromDraft(draft: DecisionDraft, deps: Deps, status: DecisionStatus): Decision {
-  const ts = deps.now().toISOString();
-  return { ...draft, id: deps.newId(), status, createdAt: ts, updatedAt: ts, version: 1 };
+export function fromDraft(draft: DecisionDraft, deps: Deps, status: DecisionStatus): Decision {
+  const now = deps.now();
+  const ts = now.toISOString();
+  const { trialDays, ...rest } = draft;
+  const d: Decision = { ...rest, ...(trialDays ? { trialDays } : {}), id: deps.newId(), status, createdAt: ts, updatedAt: ts, version: 1 };
+  return status === 'accepted' ? startTrial(d, now) : d;
 }
 
 async function load(deps: Deps, id: string): Promise<Decision> {
@@ -48,6 +51,14 @@ export async function supersedeDecision(deps: Deps, oldId: string, raw: unknown,
     throw e;
   }
   return res;
+}
+
+/** Owner ends a trial run early; the decision is enforced from now. */
+export async function enforceNow(deps: Deps, id: string, actorAccountId: string): Promise<Decision> {
+  const cur = await load(deps, id);
+  const next = endTrial(cur, actorAccountId, deps.now());
+  await deps.store.updateDecision(next, cur.version);
+  return next;
 }
 
 export async function getDecisionWithHistory(deps: Deps, id: string): Promise<{ decision: Decision; history: Decision[] }> {

@@ -13,13 +13,56 @@ function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function termRegex(term: string, flags: string): RegExp | null {
+  const t = term.trim();
+  if (!t) return null;
+  const body = t.split(/\s+/).map(escapeRegex).join('[\\s\\-_]+');
+  return new RegExp(`(^|[^\\p{L}\\p{N}])(${body})(?=$|[^\\p{L}\\p{N}])`, flags);
+}
+
 /** Case-insensitive whole-term match that treats any run of whitespace in the term as flexible. */
 export function containsTerm(text: string, term: string): boolean {
-  const t = term.trim();
-  if (!t) return false;
-  const body = t.split(/\s+/).map(escapeRegex).join('[\\s\\-_]+');
-  const re = new RegExp(`(^|[^\\p{L}\\p{N}])${body}(?=$|[^\\p{L}\\p{N}])`, 'iu');
-  return re.test(text);
+  return termRegex(term, 'iu')?.test(text) ?? false;
+}
+
+/** Words that, just before a term, mean the text rules it out rather than proposes it. */
+const NEGATORS = new Set([
+  'not', 'never', 'no', "don't", 'dont', "doesn't", "won't", "mustn't", "shouldn't", 'cannot', "can't",
+  'avoid', 'avoids', 'avoiding', 'without', 'prohibit', 'prohibits', 'prohibited', 'forbid', 'forbids', 'forbidden',
+  'stop', 'stops', 'remove', 'removes', 'removing', 'instead',
+]);
+const NEGATION_WINDOW = 3;
+
+function negatedAt(text: string, index: number): boolean {
+  const before = text.slice(Math.max(0, index - 60), index).toLowerCase().replace(/[’]/g, "'");
+  // A sentence boundary resets the window: "We never log it. Store card numbers." is not negated.
+  const clause = before.split(/[.!?;\n]/).pop() ?? '';
+  const words = clause.split(/[^\p{L}\p{N}']+/u).filter(Boolean).slice(-NEGATION_WINDOW);
+  return words.some((w) => NEGATORS.has(w));
+}
+
+function stripAllowed(text: string, allow: string[] | undefined): string {
+  let out = text;
+  for (const phrase of allow ?? []) {
+    const re = termRegex(phrase, 'giu');
+    if (re) out = out.replace(re, (_m, lead: string) => `${lead} `);
+  }
+  return out;
+}
+
+/**
+ * True when the text proposes the term: a whole-term match that is not inside an allowed phrase
+ * and not just after a negation ("we must not store card numbers" does not count).
+ */
+export function mentionsTerm(text: string, term: string, allow?: string[]): boolean {
+  const cleaned = stripAllowed(text, allow);
+  const re = termRegex(term, 'giu');
+  if (!re) return false;
+  for (const m of cleaned.matchAll(re)) {
+    const start = (m.index ?? 0) + m[1].length;
+    if (!negatedAt(cleaned, start)) return true;
+  }
+  return false;
 }
 
 function textOf(item: WorkItem, field: TextField): string {
@@ -53,7 +96,7 @@ export function evaluateConstraint(c: Constraint, action: ProposedAction, now: D
       const found: string[] = [];
       for (const term of c.terms) {
         for (const field of c.fields) {
-          if (containsTerm(textOf(item, field), term)) {
+          if (mentionsTerm(textOf(item, field), term, c.allow)) {
             found.push(`"${term}" in ${field}`);
             break;
           }

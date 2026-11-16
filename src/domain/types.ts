@@ -10,6 +10,14 @@ export type DecisionStatus = 'proposed' | 'accepted' | 'superseded' | 'deprecate
 /** How a conflict with this decision is handled. */
 export type Enforcement = 'warn' | 'block';
 
+/**
+ * How a decision finds the work it applies to.
+ * - scope: matches projects, issue types, components and labels.
+ * - connected: work linked to the decision's Confluence page (directly or via a parent issue).
+ * - both: either way.
+ */
+export type Reach = 'scope' | 'connected' | 'both';
+
 /** Which work items a decision applies to. Empty arrays mean "any". */
 export interface DecisionScope {
   projectKeys: string[];
@@ -29,6 +37,8 @@ export type Constraint =
       id: string;
       terms: string[];
       fields: TextField[];
+      /** Phrases that are fine even though they contain a term, e.g. "tokenised card number". */
+      allow?: string[];
     }
   | {
       /** Work item must not carry any of these labels. */
@@ -91,6 +101,12 @@ export interface Decision {
   reviewBy?: string;
   /** Created by the demo seeder, so it can be recognised and not seeded twice. */
   demo?: boolean;
+  /** How the decision reaches work. Defaults from scope and source page (see reachOf). */
+  reach?: Reach;
+  /** Length of the trial run, started when the decision is accepted. */
+  trialDays?: number;
+  /** While now is before this, conflicts are recorded quietly ("would have flagged") and nothing is blocked. */
+  trialUntil?: string;
   createdAt: string;
   updatedAt: string;
   version: number;
@@ -151,6 +167,19 @@ export interface Violation {
   evidence: string[];
   sourceUrl?: string;
   exceptionId?: string;
+  /** How the decision reached this work. */
+  via: 'scope' | 'connected';
+  /** For connected matches: the readable path from the work to the decision's page. */
+  path?: string[];
+  /** True when enforcement was lowered to warn because the match was inferred and not confirmed. */
+  capped?: boolean;
+}
+
+/** A connection from a work item to a decision's page, found in the graph. */
+export interface Connection {
+  path: string[];
+  /** The decision owner confirmed this path, so the decision may block through it. */
+  confirmed: boolean;
 }
 
 export type Verdict = 'allow' | 'warn' | 'block';
@@ -161,7 +190,11 @@ export interface CheckResult {
   violations: Violation[];
   /** Violations waived by an owner exception, kept for the audit trail. */
   waived: Violation[];
-  /** Decisions whose scope matched, whether or not they were violated. */
+  /** Conflicts with decisions still in their trial run: recorded, never enforced. */
+  shadow: Violation[];
+  /** Decisions that applied (by scope or connection), whether or not they were violated. */
   applicableDecisionIds: string[];
+  /** True when connected matching was skipped because the graph is out of date. */
+  graphStale?: boolean;
   evaluatedAt: string;
 }

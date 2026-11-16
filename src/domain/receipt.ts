@@ -21,6 +21,12 @@ export interface Receipt {
   decisionIds: string[];
   violationCount: number;
   waivedCount: number;
+  /** Conflicts with decisions in their trial run (absent when zero, so older receipts verify unchanged). */
+  shadowCount?: number;
+  /** Paths used by connected matches, as "decisionId: A → B → C". */
+  paths?: string[];
+  /** When the graph used for this check was last fully refreshed. */
+  graphAt?: string;
   createdAt: string;
 }
 
@@ -45,8 +51,12 @@ export function buildReceipt(
   result: CheckResult,
   prev: { sequence: number; hash: string } | null,
   id: string,
+  graphAt: string | null = null,
 ): Receipt {
-  const decisionIds = [...new Set([...result.violations, ...result.waived].map((v) => v.decisionId))].sort();
+  const all = [...result.violations, ...result.waived, ...(result.shadow ?? [])];
+  const decisionIds = [...new Set(all.map((v) => v.decisionId))].sort();
+  const paths = [...new Set(all.filter((v) => v.via === 'connected' && v.path).map((v) => `${v.decisionId}: ${v.path!.join(' → ')}`))].sort();
+  const shadowCount = result.shadow?.length ?? 0;
   const body: Omit<Receipt, 'hash'> = {
     id,
     sequence: prev ? prev.sequence + 1 : 1,
@@ -62,6 +72,9 @@ export function buildReceipt(
     decisionIds,
     violationCount: result.violations.length,
     waivedCount: result.waived.length,
+    ...(shadowCount ? { shadowCount } : {}),
+    ...(paths.length ? { paths } : {}),
+    ...(graphAt && paths.length ? { graphAt } : {}),
     createdAt: result.evaluatedAt,
   };
   return { ...body, hash: hashReceipt(body) };

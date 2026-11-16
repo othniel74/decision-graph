@@ -4,7 +4,7 @@
 import { runMigrations } from './storage/sql';
 
 export { handler as resolver } from './handlers/resolvers';
-export { validateTransition, onIssueEvent } from './handlers/jira-events';
+export { validateTransition, onIssueEvent, onIssueLinkEvent, graphSweep } from './handlers/jira-events';
 export {
   checkPlanRovo,
   checkPlanMcp,

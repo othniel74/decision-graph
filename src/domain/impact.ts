@@ -1,5 +1,5 @@
 import { check } from './engine';
-import type { Decision, DecisionException, DecisionScope, Violation, WorkItem } from './types';
+import type { Connection, Decision, DecisionException, DecisionScope, Violation, WorkItem } from './types';
 
 /**
  * Impact analysis: which open work already contradicts a decision.
@@ -33,6 +33,7 @@ export function analyseImpact(
   exceptions: DecisionException[],
   now: Date,
   truncated = false,
+  connectionsByIssue: Map<string, Connection> = new Map(),
 ): ImpactReport {
   const asAccepted: Decision = { ...decision, status: 'accepted' };
   const affected: ImpactedItem[] = [];
@@ -42,14 +43,17 @@ export function analyseImpact(
       decisions: [asAccepted],
       exceptions: exceptions.filter((e) => e.decisionId === decision.id),
       now,
+      connections: item.key && connectionsByIssue.has(item.key) ? new Map([[decision.id, connectionsByIssue.get(item.key)!]]) : undefined,
     });
-    if (r.violations.length || r.waived.length) {
+    // During a trial run the would-be conflicts are what an owner wants to see.
+    const live = [...r.violations, ...r.shadow];
+    if (live.length || r.waived.length) {
       affected.push({
         key: item.key ?? '',
         summary: item.summary ?? '',
         status: item.status,
-        violations: r.violations,
-        waived: r.violations.length === 0,
+        violations: live,
+        waived: live.length === 0,
       });
     }
   }
@@ -63,6 +67,12 @@ const SAFE_KEY = /^[A-Z][A-Z0-9_]+$/;
 /** JQL string literal: double quotes, with backslashes and quotes escaped. */
 export function jqlString(s: string): string {
   return `"${s.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`;
+}
+
+/** Open work among specific issue keys (for connected reach). Keys are validated. */
+export function keysToJql(keys: string[]): string | null {
+  const safe = keys.filter((k) => /^[A-Z][A-Z0-9_]+-\d+$/.test(k)).slice(0, 500);
+  return safe.length ? `key in (${safe.join(', ')}) AND statusCategory != Done ORDER BY updated DESC` : null;
 }
 
 /** Open (not Done) work in the decision's scope. */

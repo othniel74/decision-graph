@@ -1,7 +1,9 @@
 import type { Decision, DecisionException, DecisionStatus } from '../domain/types';
 import type { Receipt } from '../domain/receipt';
+import type { Edge, PathOverride } from '../domain/graph';
 
-export type ConflictStatus = 'open' | 'upheld' | 'excepted' | 'superseded' | 'withdrawn';
+/** `shadow` = recorded during a decision's trial run; never notified or enforced. */
+export type ConflictStatus = 'open' | 'upheld' | 'excepted' | 'superseded' | 'withdrawn' | 'shadow';
 
 /** A conflict waiting for, or resolved by, the decision owner. */
 export interface Conflict {
@@ -14,6 +16,8 @@ export interface Conflict {
   actorName?: string;
   message: string;
   evidence: string[];
+  /** For connected matches: the path from the work to the decision's page. */
+  path?: string[];
   status: ConflictStatus;
   requestNote?: string;
   resolutionNote?: string;
@@ -55,4 +59,13 @@ export interface Store {
 
   getSetting(key: string): Promise<string | null>;
   setSetting(key: string, value: string): Promise<void>;
+
+  /** Replace every edge leaving `from` with `edges` (all must have that `from`). */
+  replaceEdgesFrom(from: string, edges: Edge[], at: string): Promise<void>;
+  listEdgesFrom(nodes: string[]): Promise<Edge[]>;
+  listEdgesTo(nodes: string[]): Promise<Edge[]>;
+
+  listOverrides(filter: { issueKey?: string; decisionId?: string }): Promise<PathOverride[]>;
+  /** One override per decision and issue; a new one replaces the old. */
+  putOverride(o: PathOverride): Promise<void>;
 }

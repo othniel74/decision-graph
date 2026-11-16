@@ -34,7 +34,24 @@ export function transition(d: Decision, to: DecisionStatus, actorAccountId: stri
   if (!canTransition(d.status, to)) {
     throw new DomainError(`A ${d.status} decision cannot become ${to}.`, 'CONFLICT');
   }
-  return { ...d, status: to, updatedAt: now.toISOString(), version: d.version + 1 };
+  const next = { ...d, status: to, updatedAt: now.toISOString(), version: d.version + 1 };
+  return to === 'accepted' ? startTrial(next, now) : next;
+}
+
+const DAY_MS = 86_400_000;
+
+/** Start the trial run, if the decision has one, from the moment it is accepted. */
+export function startTrial(d: Decision, now: Date): Decision {
+  if (!d.trialDays) return d;
+  return { ...d, trialUntil: new Date(now.getTime() + d.trialDays * DAY_MS).toISOString() };
+}
+
+/** The owner ends the trial early and enforcement starts now. */
+export function endTrial(d: Decision, actorAccountId: string, now: Date): Decision {
+  assertOwner(d, actorAccountId);
+  if (d.status !== 'accepted') throw new DomainError('Only an accepted decision can be enforced.', 'CONFLICT');
+  if (!d.trialUntil || Date.parse(d.trialUntil) <= now.getTime()) throw new DomainError('This decision is not in a trial run.', 'CONFLICT');
+  return { ...d, trialUntil: now.toISOString(), updatedAt: now.toISOString(), version: d.version + 1 };
 }
 
 /**
@@ -51,12 +68,15 @@ export function supersede(
   const retired = transition(old, 'superseded', actorAccountId, now);
   return {
     old: { ...retired, supersededById: replacement.id },
-    replacement: {
-      ...replacement,
-      status: 'accepted',
-      supersedesId: old.id,
-      updatedAt: now.toISOString(),
-    },
+    replacement: startTrial(
+      {
+        ...replacement,
+        status: 'accepted',
+        supersedesId: old.id,
+        updatedAt: now.toISOString(),
+      },
+      now,
+    ),
   };
 }
 

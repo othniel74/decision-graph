@@ -2,7 +2,9 @@ import Resolver from '@forge/resolver';
 import { DomainError } from '../domain/lifecycle';
 import { str } from '../domain/validate';
 import type { DecisionStatus } from '../domain/types';
-import { fetchWorkItem, requiredFieldIds, isJiraAdmin, forgeDemoJira, forgeWorkSearch } from '../adapters/jira';
+import { fetchWorkItem, requiredFieldIds, isJiraAdmin, forgeDemoJira, forgeWorkSearch, forgeGraphSource } from '../adapters/jira';
+import { refreshNeighbourhood, setPathOverride, reportsForOwner } from '../services/graph';
+import { enforceNow } from '../services/decisions';
 import { decisionImpact, previewImpact } from '../services/impact';
 import { ownerTeams, pageOwnerAccountIds } from '../adapters/teamwork-graph';
 import { runCheck } from '../services/checks';
@@ -43,18 +45,34 @@ resolver.define('issuePanel', async ({ context }: Req) =>
     const key = context.extension?.issue?.key;
     if (!key) throw new DomainError('No issue in context.', 'INVALID');
     const d = deps();
+    // Bring this issue's links up to date so the "why this applies" path is current.
+    try {
+      await refreshNeighbourhood(d, forgeGraphSource, key);
+    } catch (e) {
+      console.warn(`panel graph refresh failed for ${key}: ${(e as Error).message}`);
+    }
     const all = await d.store.listDecisions({ statuses: ['accepted'] });
     const item = await fetchWorkItem(key, requiredFieldIds(all), 'user');
     const preview = await runCheck(d, { type: 'update', actorType: 'human', actorAccountId: me, item }, { record: false, decisions: all });
-    const [conflicts, exceptions] = await Promise.all([
+    const [conflicts, exceptions, overrides] = await Promise.all([
       d.store.listConflicts({ issueKey: key, limit: 20 }),
       d.store.listExceptions({ issueKey: key }),
+      d.store.listOverrides({ issueKey: key }),
     ]);
     const applicable = all.filter((x) => preview.result.applicableDecisionIds.includes(x.id));
     const owners = [...new Set(preview.result.violations.map((v) => v.ownerAccountId))].slice(0, 3);
     const twg = (await getSettings(d)).teamworkGraph;
     const teams = twg ? Object.fromEntries(await Promise.all(owners.map(async (o) => [o, await ownerTeams(o)] as const))) : {};
-    return { me, issueKey: key, result: preview.result, applicable, conflicts, exceptions, ownerTeams: teams };
+    return {
+      me,
+      issueKey: key,
+      result: preview.result,
+      applicable,
+      conflicts: conflicts.filter((c) => c.status !== 'shadow'),
+      exceptions,
+      overrides,
+      ownerTeams: teams,
+    };
   }),
 );
 
@@ -98,7 +116,29 @@ resolver.define('resolveConflict', async ({ payload, context }: Req) =>
   }),
 );
 
-resolver.define('reviewQueue', async ({ context }: Req) => safely(async () => myReviewQueue(deps(), actor(context))));
+resolver.define('reviewQueue', async ({ context }: Req) =>
+  safely(async () => {
+    const me = actor(context);
+    const [conflicts, reports] = await Promise.all([myReviewQueue(deps(), me), reportsForOwner(deps(), me)]);
+    return { conflicts, reports };
+  }),
+);
+
+/** Owner confirms or excludes a connected path for one issue; anyone may report it as not relevant. */
+resolver.define('setPathOverride', async ({ payload, context }: Req) =>
+  safely(async () => setPathOverride(deps(), { decisionId: payload.decisionId, issueKey: payload.issueKey, state: payload.state, note: payload.note }, actor(context))),
+);
+
+/** Owner ends a decision's trial run; enforcement starts now. */
+resolver.define('enforceNow', async ({ payload, context }: Req) => safely(async () => enforceNow(deps(), str(payload.id, 'id', { max: 64 }), actor(context))));
+
+/** What a decision in its trial run would have flagged so far. */
+resolver.define('trialHits', async ({ payload, context }: Req) =>
+  safely(async () => {
+    actor(context);
+    return deps().store.listConflicts({ status: 'shadow', ownerDecisionIds: [str(payload.id, 'id', { max: 64 })], limit: 50 });
+  }),
+);
 
 resolver.define('health', async () =>
   safely(async () => ({ summary: await health(deps()), dueForReview: await decisionsDueForReview(deps()) })),
