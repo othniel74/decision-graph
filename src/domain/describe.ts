@@ -1,4 +1,5 @@
 import type { Constraint, Decision, DecisionScope, FreezeWindow } from './types';
+import { reachOf } from './engine';
 
 /**
  * Plain-English previews of rules and scopes, used in forms and decision cards.
@@ -35,13 +36,34 @@ export function describeScope(s: DecisionScope | undefined): string {
 
 type PartialConstraint = Partial<Constraint> & { kind?: Constraint['kind'] } & Record<string, unknown>;
 
-/** "Blocks issues in PAY that mention "store card" or "card number"". */
-export function describeConstraint(c: PartialConstraint, scope?: DecisionScope, enforcement: 'warn' | 'block' = 'block'): string {
+const scopeIsEmpty = (s?: DecisionScope) => !s || (!s.projectKeys?.length && !s.issueTypes?.length && !s.components?.length && !s.labels?.length);
+
+export interface DescribeOptions {
+  /** The decision also reaches work linked to its Confluence page. */
+  linked?: boolean;
+  /** Linked only: scopes are ignored. */
+  linkedOnly?: boolean;
+}
+
+function whoText(scope: DecisionScope | undefined, opts: DescribeOptions): string {
+  if (opts.linkedOnly || (opts.linked && scopeIsEmpty(scope))) return 'work linked to this page';
+  if (opts.linked) return `${describeScope(scope)}, and work linked to this page,`;
+  return describeScope(scope);
+}
+
+/** "Blocks issues in PAY, and work linked to this page, that mention "store card" or "card number"." */
+export function describeConstraint(c: PartialConstraint, scope?: DecisionScope, enforcement: 'warn' | 'block' = 'block', opts: DescribeOptions = {}): string {
   const verb = enforcement === 'block' ? 'Blocks' : 'Warns on';
-  const who = describeScope(scope);
+  const who = whoText(scope, opts);
   switch (c.kind) {
-    case 'forbid_terms':
-      return `${verb} ${who} that mention ${quoteList(c.terms as string[])}.`;
+    case 'forbid_terms': {
+      const terms = ((c.terms as string[] | undefined) ?? []).map((t) => t.trim()).filter(Boolean);
+      const allow = ((c.allow as string[] | undefined) ?? []).map((t) => t.trim()).filter(Boolean);
+      const base = `${verb} ${who} that mention ${quoteList(terms)}.`;
+      const negation = terms.length ? ` Mentions that rule it out, like "must not ${terms[0]}", are ignored.` : '';
+      const allowed = allow.length ? ` Allowed: ${quoteList(allow, 'and')}.` : '';
+      return base + negation + allowed;
+    }
     case 'forbid_labels':
       return `${verb} ${who} carrying the label ${quoteList(c.labels as string[])}.`;
     case 'forbid_components':
@@ -57,6 +79,8 @@ export function describeConstraint(c: PartialConstraint, scope?: DecisionScope, 
   }
 }
 
-export function describeDecisionRules(d: Pick<Decision, 'constraints' | 'scope' | 'enforcement'>): string[] {
-  return d.constraints.map((c) => describeConstraint(c, d.scope, d.enforcement));
+export function describeDecisionRules(d: Pick<Decision, 'constraints' | 'scope' | 'enforcement' | 'reach' | 'sourcePageId'>): string[] {
+  const reach = reachOf(d);
+  const opts: DescribeOptions = { linked: reach !== 'scope' && Boolean(d.sourcePageId), linkedOnly: reach === 'connected' };
+  return d.constraints.map((c) => describeConstraint(c, opts.linkedOnly ? undefined : d.scope, d.enforcement, opts));
 }

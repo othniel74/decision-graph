@@ -45,6 +45,27 @@ function Stat({ label, value }: { label: string; value: number | string }) {
 function ReviewQueue({ me }: { me: string }) {
   const { loading, data: queue, error, reload } = useResolver<{ conflicts: Conflict[]; reports: PathOverride[] }>('reviewQueue');
   const [msg, setMsg] = useState<string>();
+  const [superseding, setSuperseding] = useState<Decision>();
+  if (superseding) {
+    return (
+      <DecisionForm
+        title={`Supersede "${superseding.title}"`}
+        me={me}
+        defaultOwner={superseding.ownerAccountId}
+        supersedes={superseding}
+        onDone={() => {
+          setSuperseding(undefined);
+          void reload();
+        }}
+        onCancel={() => setSuperseding(undefined)}
+      />
+    );
+  }
+  const startSupersede = async (decisionId: string) => {
+    const r = await call<{ decision: Decision }>('getDecision', { id: decisionId });
+    if (r.ok) setSuperseding(r.data.decision);
+    else setMsg(r.error);
+  };
   if (loading && !queue) return <Loading what="your review queue" />;
   if (error) return <ErrorBox error={error} />;
   const data = queue?.conflicts ?? [];
@@ -91,6 +112,9 @@ function ReviewQueue({ me }: { me: string }) {
             <Inline space="space.100">
               <Button appearance="primary" onClick={() => resolve(c, 'uphold')}>Uphold</Button>
               {c.issueKey ? <Button onClick={() => resolve(c, 'grant_exception')}>Grant exception</Button> : null}
+              <Button appearance="subtle" onClick={() => startSupersede(c.decisionId)}>
+                Supersede decision…
+              </Button>
             </Inline>
           </Stack>
         </SectionMessage>

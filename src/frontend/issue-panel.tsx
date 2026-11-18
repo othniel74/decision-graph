@@ -46,6 +46,7 @@ function LinkControls({ v, issueKey, me, override, onChange }: { v: Violation; i
     <Stack space="space.075">
       <Text size="small">Applies via {v.path?.join(' → ')}</Text>
       {v.capped ? <Text size="small">Warning only: this link was found automatically and the owner hasn't confirmed it.</Text> : null}
+      {override?.state === 'confirmed' ? <Text size="small">Link confirmed by the decision owner.</Text> : null}
       {override?.state === 'reported' ? <Text size="small">Reported as not relevant: {override.note}</Text> : null}
       {error ? <Text color="color.text.danger">{error}</Text> : null}
       {isOwner ? (
@@ -133,6 +134,27 @@ function ConflictCard({ c, d, me, onChange }: { c: Conflict; d?: Decision; me: s
   );
 }
 
+/** One compact row per applicable decision; expands to the full card. */
+function ApplicableRow({ d }: { d: Decision }) {
+  const [open, setOpen] = useState(false);
+  const trial = Boolean(d.trialUntil && Date.parse(d.trialUntil) > Date.now());
+  return (
+    <Stack space="space.075">
+      <Inline space="space.100" alignBlock="center" spread="space-between">
+        <Button appearance="subtle" onClick={() => setOpen((o) => !o)}>
+          {d.title}
+        </Button>
+        {trial ? (
+          <Lozenge appearance="new">trial run</Lozenge>
+        ) : (
+          <Lozenge appearance={d.enforcement === 'block' ? 'removed' : 'moved'}>{d.enforcement}</Lozenge>
+        )}
+      </Inline>
+      {open ? <DecisionSummary d={d} /> : null}
+    </Stack>
+  );
+}
+
 function App() {
   const { loading, data, error, reload } = useResolver<PanelData>('issuePanel');
   if (loading && !data) return <Loading what="decisions" />;
@@ -209,7 +231,7 @@ function App() {
 
       {data.applicable.length ? <Heading size="xsmall">Decisions that apply</Heading> : null}
       {data.applicable.map((d) => (
-        <DecisionSummary key={d.id} d={d} />
+        <ApplicableRow key={d.id} d={d} />
       ))}
       {data.applicable.length === 0 ? (
         <Text>

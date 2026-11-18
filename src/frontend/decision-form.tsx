@@ -125,6 +125,7 @@ export function DecisionForm(props: DecisionFormProps) {
   const [impact, setImpact] = useState<ImpactResult>();
 
   const previewScope = { projectKeys: commaList(projects), issueTypes: [], components: [], labels: commaList(scopeLabels) };
+  const previewOpts = { linked: Boolean(sourcePage) && reach !== 'scope', linkedOnly: Boolean(sourcePage) && reach === 'connected' };
   const update = (i: number, patch: Partial<ConstraintRow>) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, ...patch } : r)));
 
   const buildDraft = () => ({
@@ -262,7 +263,7 @@ export function DecisionForm(props: DecisionFormProps) {
             </Stack>
           ) : null}
           <Text size="small" color="color.text.subtle">
-            Preview: {describeConstraint(toConstraint(r), previewScope, enforcement)}
+            Preview: {describeConstraint(toConstraint(r), reach === 'connected' ? undefined : previewScope, enforcement, previewOpts)}
           </Text>
           {rows.length > 1 ? (
             <Button appearance="subtle" onClick={() => setRows((rs) => rs.filter((_, j) => j !== i))}>

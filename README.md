@@ -72,7 +72,7 @@ Prerequisites: Node 22+, Forge CLI (`npm i -g @forge/cli`), an Atlassian develop
 
 ```bash
 npm install
-npm run check            # typecheck + 83 unit tests
+npm run check            # typecheck + 84 unit tests
 npm run lint:manifest    # offline manifest schema check
 
 forge login
