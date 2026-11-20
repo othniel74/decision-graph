@@ -15,6 +15,7 @@ import {
   UserPicker,
   HelperMessage,
   Checkbox,
+  DatePicker,
 } from '@forge/react';
 import type { ConstraintKind, Decision } from '../domain/types';
 import { describeConstraint } from '../domain/describe';
@@ -118,6 +119,9 @@ export function DecisionForm(props: DecisionFormProps) {
   const [scopeLabels, setScopeLabels] = useState(base?.scope.labels.join(', ') ?? '');
   const [rows, setRows] = useState<ConstraintRow[]>([emptyRow()]);
   const [trial, setTrial] = useState(!base);
+  const [agentStrict, setAgentStrict] = useState(base ? base.agentPolicy === 'require_human' : true);
+  const [reviewBy, setReviewBy] = useState(base?.reviewBy?.slice(0, 10) ?? '');
+  const [revisitIf, setRevisitIf] = useState(base?.revisitIf ?? '');
   const sourcePage = props.sourcePageId ?? base?.sourcePageId;
   const [reach, setReach] = useState<string>(base?.reach ?? 'auto');
   const [busy, setBusy] = useState(false);
@@ -140,6 +144,9 @@ export function DecisionForm(props: DecisionFormProps) {
       sourceUrl: props.sourceUrl ?? base?.sourceUrl,
       reach: reach === 'auto' ? undefined : reach,
       trialDays: trial ? 7 : 0,
+      agentPolicy: agentStrict ? 'require_human' : 'same',
+      reviewBy: reviewBy || undefined,
+      revisitIf: revisitIf || undefined,
   });
 
   async function checkImpact() {
@@ -217,6 +224,22 @@ export function DecisionForm(props: DecisionFormProps) {
           <HelperMessage>Linked work = issues linked to this page, and issues under an epic or parent linked to it.</HelperMessage>
         </Stack>
       ) : null}
+      <Checkbox
+        id="dg-agents"
+        label="Agents and automations always need a person to approve work that conflicts with this decision"
+        isChecked={agentStrict}
+        onChange={() => setAgentStrict((v) => !v)}
+      />
+      <Inline space="space.200" shouldWrap>
+        <Stack space="space.050">
+          <Label labelFor="dg-review">Review by</Label>
+          <DatePicker id="dg-review" value={reviewBy} onChange={(v: string) => setReviewBy(v)} />
+        </Stack>
+        <Stack space="space.050">
+          <Label labelFor="dg-revisit">Revisit if</Label>
+          <Textfield id="dg-revisit" placeholder="e.g. we change payment provider" value={revisitIf} onChange={(e) => setRevisitIf(e.target.value)} />
+        </Stack>
+      </Inline>
       <Checkbox
         id="dg-trial"
         label="Start with a 7-day trial run: record what it would flag, without blocking or notifying anyone"

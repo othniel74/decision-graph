@@ -2,15 +2,16 @@ import Resolver from '@forge/resolver';
 import { DomainError } from '../domain/lifecycle';
 import { str } from '../domain/validate';
 import type { DecisionStatus } from '../domain/types';
-import { fetchWorkItem, requiredFieldIds, isJiraAdmin, forgeDemoJira, forgeWorkSearch, forgeGraphSource } from '../adapters/jira';
+import { fetchWorkItem, requiredFieldIds, isJiraAdmin, forgeDemoJira, forgeWorkSearch, forgeGraphSource, accountInfo } from '../adapters/jira';
 import { refreshNeighbourhood, setPathOverride, reportsForOwner } from '../services/graph';
-import { enforceNow } from '../services/decisions';
+import { enforceNow, confirmStillValid, reassignOwner } from '../services/decisions';
 import { decisionImpact, previewImpact } from '../services/impact';
 import { ownerTeams, pageOwnerAccountIds } from '../adapters/teamwork-graph';
 import { runCheck } from '../services/checks';
 import { changeStatus, createDecision, getDecisionWithHistory, listDecisions, supersedeDecision, decisionsDueForReview } from '../services/decisions';
 import { myReviewQueue, requestException, resolveConflict, type Resolution } from '../services/reviews';
 import { health, verifyAuditTrail } from '../services/audit';
+import { evidenceReport } from '../services/evidence';
 import { getSettings, updateSettings } from '../services/settings';
 import { demoLoaded, seedDemo } from '../services/demo';
 import { deps, safely } from './runtime';
@@ -108,10 +109,13 @@ resolver.define('resolveConflict', async ({ payload, context }: Req) =>
   safely(async () => {
     const resolution = payload.resolution as Resolution;
     if (!['uphold', 'grant_exception', 'withdraw'].includes(resolution)) throw new DomainError('Unknown resolution.', 'INVALID');
+    const d = deps();
+    const [settings, actorIsAdmin] = await Promise.all([getSettings(d), resolution === 'grant_exception' ? isJiraAdmin() : Promise.resolve(false)]);
     return resolveConflict(
-      deps(),
+      d,
       { conflictId: str(payload.conflictId, 'conflictId', { max: 64 }), resolution, note: payload.note, expiresAt: payload.expiresAt },
       actor(context),
+      { independentApproval: settings.independentApproval, actorIsAdmin },
     );
   }),
 );
@@ -119,8 +123,9 @@ resolver.define('resolveConflict', async ({ payload, context }: Req) =>
 resolver.define('reviewQueue', async ({ context }: Req) =>
   safely(async () => {
     const me = actor(context);
-    const [conflicts, reports] = await Promise.all([myReviewQueue(deps(), me), reportsForOwner(deps(), me)]);
-    return { conflicts, reports };
+    const d = deps();
+    const [conflicts, reports, due] = await Promise.all([myReviewQueue(d, me), reportsForOwner(d, me), decisionsDueForReview(d)]);
+    return { conflicts, reports, due: due.filter((x) => x.ownerAccountId === me) };
   }),
 );
 
@@ -141,7 +146,33 @@ resolver.define('trialHits', async ({ payload, context }: Req) =>
 );
 
 resolver.define('health', async () =>
-  safely(async () => ({ summary: await health(deps()), dueForReview: await decisionsDueForReview(deps()) })),
+  safely(async () => {
+    const d = deps();
+    const [summary, due, accepted] = await Promise.all([health(d), decisionsDueForReview(d), d.store.listDecisions({ statuses: ['accepted', 'proposed'] })]);
+    // Decisions whose owner has left: nobody can approve exceptions or review them.
+    const owners = [...new Set(accepted.map((x) => x.ownerAccountId))].slice(0, 50);
+    const infos = await Promise.all(owners.map((o) => accountInfo(o)));
+    const gone = new Set(owners.filter((_, i) => infos[i] !== null && !infos[i]!.active));
+    return { summary, dueForReview: due, ownerless: accepted.filter((x) => gone.has(x.ownerAccountId)) };
+  }),
+);
+
+/** Owner confirms a decision is still right after review; the next review date moves forward. */
+resolver.define('confirmStillValid', async ({ payload, context }: Req) =>
+  safely(async () => confirmStillValid(deps(), str(payload.id, 'id', { max: 64 }), actor(context), payload.nextReviewBy)),
+);
+
+/** Current owner, or a Jira administrator when the owner has left, hands the decision to someone else. */
+resolver.define('reassignOwner', async ({ payload, context }: Req) =>
+  safely(async () => reassignOwner(deps(), str(payload.id, 'id', { max: 64 }), payload.ownerAccountId, actor(context), await isJiraAdmin())),
+);
+
+/** Change-control evidence for a period. Jira administrators only: it lists everyone's activity. */
+resolver.define('evidenceReport', async ({ payload }: Req) =>
+  safely(async () => {
+    if (!(await isJiraAdmin())) throw new DomainError('Only Jira administrators can export audit evidence.', 'FORBIDDEN');
+    return evidenceReport(deps(), { from: payload.from, to: payload.to, projectKey: payload.projectKey });
+  }),
 );
 
 resolver.define('verifyAudit', async () => safely(async () => verifyAuditTrail(deps())));

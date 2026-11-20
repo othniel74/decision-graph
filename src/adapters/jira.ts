@@ -268,3 +268,43 @@ export const forgeGraphSource: GraphSource = {
     return items.map((i) => i.key).filter((k): k is string => Boolean(k));
   },
 };
+
+// ---------- Actor identity ----------
+
+export interface AccountInfo {
+  accountId: string;
+  accountType: string;
+  displayName: string;
+  active: boolean;
+}
+
+const accountCache = new Map<string, AccountInfo | null>();
+
+/** Account type, name and active flag for an account id (cached per function runtime). */
+export async function accountInfo(accountId: string | undefined): Promise<AccountInfo | null> {
+  if (!accountId) return null;
+  if (accountCache.has(accountId)) return accountCache.get(accountId) ?? null;
+  let info: AccountInfo | null = null;
+  try {
+    const res = await api.asApp().requestJira(route`/rest/api/3/user?accountId=${accountId}`, { headers: { Accept: 'application/json' } });
+    if (res.ok) {
+      const b = (await res.json()) as { accountId: string; accountType?: string; displayName?: string; active?: boolean };
+      info = { accountId: b.accountId, accountType: b.accountType ?? 'atlassian', displayName: b.displayName ?? '', active: b.active !== false };
+    }
+  } catch (e) {
+    console.warn(`accountInfo failed: ${(e as Error).message}`);
+  }
+  accountCache.set(accountId, info);
+  return info;
+}
+
+/**
+ * Classify who acted. Agents that run under their own account (Rovo agent accounts, other apps)
+ * and Jira Automation show up as `app` accounts. An agent acting under a person's account cannot be
+ * told apart from that person here; the check-plan action covers agents that ask first.
+ */
+export function classifyActor(info: AccountInfo | null): { actorType: 'human' | 'rovo_agent' | 'automation'; actorName?: string } {
+  if (!info || info.accountType !== 'app') return { actorType: 'human' };
+  if (/automation/i.test(info.displayName)) return { actorType: 'automation', actorName: info.displayName };
+  return { actorType: 'rovo_agent', actorName: info.displayName || 'App or agent account' };
+}

@@ -18,6 +18,8 @@ export type Enforcement = 'warn' | 'block';
  */
 export type Reach = 'scope' | 'connected' | 'both';
 
+export type AgentPolicy = 'same' | 'require_human';
+
 /** Which work items a decision applies to. Empty arrays mean "any". */
 export interface DecisionScope {
   projectKeys: string[];
@@ -103,6 +105,15 @@ export interface Decision {
   demo?: boolean;
   /** How the decision reaches work. Defaults from scope and source page (see reachOf). */
   reach?: Reach;
+  /**
+   * How conflicts by agents and automations are handled. `require_human`: always blocked, so a
+   * person must approve ("co-pilot before autopilot"); people get the decision's normal enforcement.
+   */
+  agentPolicy?: AgentPolicy;
+  /** When the owner last confirmed the decision is still right. */
+  lastReviewedAt?: string;
+  /** Conditions under which the decision should be reconsidered, e.g. "if we change payment provider". */
+  revisitIf?: string;
   /** Length of the trial run, started when the decision is accepted. */
   trialDays?: number;
   /** While now is before this, conflicts are recorded quietly ("would have flagged") and nothing is blocked. */
@@ -173,6 +184,8 @@ export interface Violation {
   path?: string[];
   /** True when enforcement was lowered to warn because the match was inferred and not confirmed. */
   capped?: boolean;
+  /** True when enforcement was raised to block because an agent or automation acted. */
+  agentStrict?: boolean;
 }
 
 /** A connection from a work item to a decision's page, found in the graph. */

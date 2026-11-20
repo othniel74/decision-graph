@@ -74,3 +74,44 @@ export async function listDecisions(deps: Deps, opts: { statuses?: DecisionStatu
 export async function decisionsDueForReview(deps: Deps): Promise<Decision[]> {
   return dueForReview(await deps.store.listDecisions({ statuses: ['accepted'] }), deps.now());
 }
+
+const DAY = 86_400_000;
+
+/**
+ * Owner confirms a decision is still right after review. The next review date moves forward
+ * (default six months). The receipt trail keeps the history; the decision records when it was last reviewed.
+ */
+export async function confirmStillValid(deps: Deps, id: string, actorAccountId: string, nextReviewBy?: unknown): Promise<Decision> {
+  const cur = await load(deps, id);
+  if (cur.ownerAccountId !== actorAccountId) throw new DomainError('Only the decision owner can confirm it after review.', 'FORBIDDEN');
+  if (cur.status !== 'accepted') throw new DomainError('Only accepted decisions are reviewed.', 'INVALID');
+  const now = deps.now();
+  let next: string;
+  if (nextReviewBy === undefined || nextReviewBy === null || nextReviewBy === '') {
+    next = new Date(now.getTime() + 182 * DAY).toISOString().slice(0, 10);
+  } else if (typeof nextReviewBy === 'string' && !Number.isNaN(Date.parse(nextReviewBy)) && Date.parse(nextReviewBy) > now.getTime()) {
+    next = nextReviewBy.slice(0, 10);
+  } else {
+    throw new DomainError('The next review date must be in the future.', 'INVALID');
+  }
+  const updated: Decision = { ...cur, reviewBy: next, lastReviewedAt: now.toISOString(), updatedAt: now.toISOString(), version: cur.version + 1 };
+  await deps.store.updateDecision(updated, cur.version);
+  return updated;
+}
+
+/**
+ * Hand a decision to a new owner. The current owner can do this; so can a Jira administrator,
+ * for when the owner has left and the decision would otherwise have nobody to approve exceptions.
+ */
+export async function reassignOwner(deps: Deps, id: string, newOwner: unknown, actorAccountId: string, actorIsAdmin: boolean): Promise<Decision> {
+  const cur = await load(deps, id);
+  if (cur.ownerAccountId !== actorAccountId && !actorIsAdmin) {
+    throw new DomainError('Only the decision owner or a Jira administrator can change the owner.', 'FORBIDDEN');
+  }
+  if (typeof newOwner !== 'string' || !newOwner.trim() || newOwner.length > 128) throw new DomainError('Choose the new owner.', 'INVALID');
+  if (!['accepted', 'proposed'].includes(cur.status)) throw new DomainError('Only accepted or proposed decisions can change owner.', 'INVALID');
+  const ts = deps.now().toISOString();
+  const updated: Decision = { ...cur, ownerAccountId: newOwner, updatedAt: ts, version: cur.version + 1 };
+  await deps.store.updateDecision(updated, cur.version);
+  return updated;
+}

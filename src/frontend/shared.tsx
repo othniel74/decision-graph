@@ -97,6 +97,21 @@ export function DecisionSummary({ d }: { d: Decision }) {
         </Inline>
         <Text>{d.statement}</Text>
         {d.rationale ? <Text size="small">Why: {d.rationale}</Text> : null}
+        {d.agentPolicy === 'require_human' ? (
+          <Text size="small" color="color.text.subtle">
+            • Agents and automations always need a person to approve conflicting work.
+          </Text>
+        ) : null}
+        {d.reviewBy ? (
+          <Text size="small" color={Date.parse(d.reviewBy) <= Date.now() ? 'color.text.warning' : 'color.text.subtle'}>
+            {Date.parse(d.reviewBy) <= Date.now() ? 'Due for review since' : 'Review by'} {d.reviewBy.slice(0, 10)}
+            {d.revisitIf ? ` · Revisit if ${d.revisitIf}` : ''}
+          </Text>
+        ) : d.revisitIf ? (
+          <Text size="small" color="color.text.subtle">
+            Revisit if {d.revisitIf}
+          </Text>
+        ) : null}
         {describeDecisionRules(d).map((line, i) => (
           <Text key={i} size="small" color="color.text.subtle">
             • {line}

@@ -41,6 +41,20 @@ Guards against false alarms and inconsistency:
 
 For any decision, **Show affected work** (Confluence macro, Decisions register) searches open Jira issues in its scope and lists those that already contradict it, with reasons. **Check impact on open work** in the decision form previews this before a decision is saved or superseded. Searches run as the current user (enhanced JQL search, capped at 200 issues).
 
+## Agents and automations
+
+Each decision can require a person to approve conflicting work done by agents and automations ("co-pilot before autopilot"). People get the decision's normal enforcement; agents get a block. The workflow validator and the issue triggers look up who acted: Rovo agents with their own account, other apps and Jira Automation run as `app` accounts and are recorded by name on every receipt. An agent acting under a person's own account looks like that person here; the Rovo and MCP `check-plan` tools cover agents that ask first.
+
+## Audit evidence and independent approval
+
+Activity → Audit evidence (Jira administrators): every check, verdict and approval for a period, filterable by project, with who acted (person, agent or automation), totals, self-approvals flagged, chain verification and a CSV to copy. Built for SOC 2 CC8.1, ISO 27001 A.8.32 and DORA change-control reviews. CSV cells are protected against spreadsheet formulas.
+
+Independent approval (Setup, on by default): nobody approves an exception for a conflict they raised. If the decision owner raised it, a Jira administrator approves instead.
+
+## Keeping decisions current
+
+Decisions can carry a review date and a "revisit if" condition. When the date passes, the owner sees "Is this still right?" in their review queue: confirm it (next review in six months) or supersede it. It stays enforced meanwhile. Activity lists decisions whose owner has left Jira; the owner or a Jira administrator can hand them to someone else.
+
 ## Rule types
 
 `forbid_terms` · `forbid_labels` · `forbid_components` · `restrict_transition` (optional freeze window, timezone-aware, wraps midnight) · `require_field`
@@ -88,6 +102,8 @@ Then:
 3. For external agents: in Atlassian Administration → Connected apps, enable the DecisionGraph MCP tools. The endpoint is `https://mcp.atlassian.com/forge/<appId>`.
 
 ## Known limits (check on your dev site)
+
+- Agent detection relies on `accountType: app` from `/rest/api/3/user`; confirm how Rovo agent accounts and Automation appear on your site.
 
 - **Teamwork Graph is off by default.** A Jira admin turns it on in Setup. The API is EAP; the docs say apps calling it should only be installed in test organisations. It is used only for enrichment (owner's teams, page owners) and fails soft. Confirm the node fields in `src/adapters/teamwork-graph.ts` against the live schema in the TWG playground.
 - **Workflow validators** apply to company-managed project workflows.

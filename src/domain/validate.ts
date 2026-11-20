@@ -3,7 +3,7 @@
  * Hand-written to keep the Forge bundle small and errors user-readable.
  */
 import { DomainError } from './lifecycle';
-import type { Constraint, DecisionScope, Enforcement, FreezeWindow, Reach, TextField } from './types';
+import type { AgentPolicy, Constraint, DecisionScope, Enforcement, FreezeWindow, Reach, TextField } from './types';
 
 const MAX_TEXT = 4000;
 const MAX_LIST = 50;
@@ -130,6 +130,8 @@ export interface DecisionDraft {
   reach?: Reach;
   /** Days of trial run before enforcement (0 = enforce at once). */
   trialDays: number;
+  agentPolicy?: AgentPolicy;
+  revisitIf?: string;
 }
 
 /** Validate a decision draft. `newId` mints constraint ids so callers cannot inject their own. */
@@ -155,7 +157,15 @@ export function parseDecisionDraft(v: unknown, newId: () => string): DecisionDra
     reviewBy: reviewBy || undefined,
     reach: parseReach(v.reach),
     trialDays: v.trialDays === undefined ? 0 : intIn(v.trialDays, 'trialDays', 0, 30),
+    agentPolicy: parseAgentPolicy(v.agentPolicy),
+    revisitIf: str(v.revisitIf, 'revisitIf', { required: false, max: 1000 }) || undefined,
   };
+}
+
+function parseAgentPolicy(v: unknown): AgentPolicy | undefined {
+  if (v === undefined || v === null || v === '') return undefined;
+  if (v === 'same' || v === 'require_human') return v;
+  fail('agentPolicy must be "same" or "require_human".');
 }
 
 function parseReach(v: unknown): Reach | undefined {

@@ -14,6 +14,9 @@ export interface CheckInput {
   graphStale?: boolean;
 }
 
+/** Actors that are not a person acting directly. */
+export const AGENT_ACTORS = new Set<ProposedAction['actorType']>(['rovo_agent', 'mcp_client', 'automation']);
+
 const scopeIsEmpty = (s: DecisionScope) => !s.projectKeys.length && !s.issueTypes.length && !s.components.length && !s.labels.length;
 
 /**
@@ -73,7 +76,9 @@ export function check(input: CheckInput): CheckResult {
 
   for (const { decision: d, via, connection } of applicable) {
     const exception = findException(exceptions, d.id, action.item.key, now);
-    const capped = via === 'connected' && !connection?.confirmed && d.enforcement === 'block';
+    const agentStrict = AGENT_ACTORS.has(action.actorType) && d.agentPolicy === 'require_human';
+    const capped = !agentStrict && via === 'connected' && !connection?.confirmed && d.enforcement === 'block';
+    const enforcement = agentStrict ? 'block' : capped ? 'warn' : d.enforcement;
     for (const c of d.constraints) {
       const hit = evaluateConstraint(c, action, now);
       if (!hit) continue;
@@ -82,7 +87,7 @@ export function check(input: CheckInput): CheckResult {
         decisionTitle: d.title,
         constraintId: c.id,
         constraintKind: c.kind,
-        enforcement: capped ? 'warn' : d.enforcement,
+        enforcement,
         ownerAccountId: d.ownerAccountId,
         message: hit.message,
         evidence: hit.evidence,
@@ -90,6 +95,7 @@ export function check(input: CheckInput): CheckResult {
         via,
         ...(connection ? { path: connection.path } : {}),
         ...(capped ? { capped: true } : {}),
+        ...(agentStrict ? { agentStrict: true } : {}),
       };
       if (inTrial(d, now)) shadow.push(v);
       else if (exception) waived.push({ ...v, exceptionId: exception.id });
@@ -120,5 +126,8 @@ export function summarise(result: CheckResult): string {
     const why = v.via === 'connected' && v.path?.length ? ` (applies via ${v.path.join(' → ')})` : '';
     return `- ${v.decisionTitle}: ${v.message}${why}`;
   });
-  return `${lead}:\n${lines.join('\n')}\nAsk the decision owner for an exception, or change the plan.`;
+  const agentNote = result.violations.some((v) => v.agentStrict)
+    ? '\nAgents and automations need a person to approve work that conflicts with this decision.'
+    : '';
+  return `${lead}:\n${lines.join('\n')}${agentNote}\nAsk the decision owner for an exception, or change the plan.`;
 }

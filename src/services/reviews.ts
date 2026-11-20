@@ -22,14 +22,26 @@ export async function requestException(deps: Deps, conflictId: string, noteRaw: 
 
 export type Resolution = 'uphold' | 'grant_exception' | 'withdraw';
 
+export interface ApprovalPolicy {
+  /** The person who raised a conflict may not approve their own exception (segregation of duties). */
+  independentApproval: boolean;
+  /** The actor is a Jira administrator. Admins may approve when the owner raised the conflict themselves. */
+  actorIsAdmin: boolean;
+}
+
+const DEFAULT_POLICY: ApprovalPolicy = { independentApproval: true, actorIsAdmin: false };
+
 /**
  * Resolve a conflict. Upholding and granting exceptions are owner-only;
  * the person who triggered a conflict may withdraw it (they changed their plan).
+ * With independent approval on, nobody approves an exception for a conflict they raised;
+ * if the owner raised it, a Jira administrator approves instead.
  */
 export async function resolveConflict(
   deps: Deps,
   input: { conflictId: string; resolution: Resolution; note?: unknown; expiresAt?: unknown },
   actorAccountId: string,
+  policy: ApprovalPolicy = DEFAULT_POLICY,
 ): Promise<{ conflict: Conflict; exception?: DecisionException }> {
   const c = await loadConflict(deps, input.conflictId);
   if (c.status !== 'open') throw new DomainError('This conflict is already resolved.', 'CONFLICT');
@@ -47,8 +59,17 @@ export async function resolveConflict(
     return { conflict };
   }
 
-  if (actorAccountId !== decision.ownerAccountId) {
+  const ownerRaisedIt = c.actorAccountId !== undefined && c.actorAccountId === decision.ownerAccountId;
+  const adminStandsIn =
+    input.resolution === 'grant_exception' && policy.independentApproval && ownerRaisedIt && policy.actorIsAdmin && actorAccountId !== c.actorAccountId;
+  if (actorAccountId !== decision.ownerAccountId && !adminStandsIn) {
     throw new DomainError('Only the decision owner can resolve this conflict.', 'FORBIDDEN');
+  }
+  if (input.resolution === 'grant_exception' && policy.independentApproval && actorAccountId === c.actorAccountId) {
+    throw new DomainError(
+      'You raised this conflict, so someone else must approve the exception. Ask a Jira administrator, or switch off independent approval in Setup.',
+      'FORBIDDEN',
+    );
   }
 
   if (input.resolution === 'uphold') {
